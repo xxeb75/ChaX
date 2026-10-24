@@ -35,6 +35,8 @@ export class SimNetwork implements Clock {
   loss: number;
   readonly mtu: number;
   framesSent = 0;
+  /** Observer for visualisation: called for every frame put on the air. */
+  onFrame?: (from: string, to: string, bytes: Uint8Array, lost: boolean) => void;
 
   constructor(opts: SimOptions = {}) {
     this.rng = mulberry32(opts.seed ?? 1);
@@ -92,7 +94,9 @@ export class SimNetwork implements Clock {
   deliver(from: string, to: string, bytes: Uint8Array): void {
     if (!this.isLinked(from, to)) return;
     this.framesSent++;
-    if (this.rng() < this.loss) return;
+    const lost = this.rng() < this.loss;
+    this.onFrame?.(from, to, bytes, lost);
+    if (lost) return;
     this.setTimeout(() => {
       if (this.isLinked(from, to)) this.transports.get(to)?.recv(from, bytes);
     }, this.latencyMs);

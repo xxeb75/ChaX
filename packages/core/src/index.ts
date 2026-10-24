@@ -6,3 +6,5 @@ export * from './transport';
 export * from './sim';
 export * from './node';
 export * from './broadcast';
+export * from './websocket';
+export * from './ble';

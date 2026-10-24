@@ -1,0 +1,6 @@
+{
+  "appId": "app.chax.mesh",
+  "appName": "ChaX",
+  "webDir": "../chat-web/dist",
+  "android": { "allowMixedContent": false }
+}

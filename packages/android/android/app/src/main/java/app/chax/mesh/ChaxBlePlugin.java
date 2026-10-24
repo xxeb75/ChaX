@@ -22,12 +22,17 @@ import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanFilter;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelUuid;
 import android.util.Base64;
+
+import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
@@ -67,7 +72,8 @@ import java.util.UUID;
                 Manifest.permission.BLUETOOTH_CONNECT
             }
         ),
-        @Permission(alias = "loc", strings = { Manifest.permission.ACCESS_FINE_LOCATION })
+        @Permission(alias = "loc", strings = { Manifest.permission.ACCESS_FINE_LOCATION }),
+        @Permission(alias = "notif", strings = { Manifest.permission.POST_NOTIFICATIONS })
     }
 )
 @SuppressLint("MissingPermission")
@@ -94,6 +100,9 @@ public class ChaxBlePlugin extends Plugin {
     private BluetoothLeScanner scanner;
     private byte[] myId;
     private boolean running;
+    private boolean wanted; // the app asked for the mesh; survives a Bluetooth off/on cycle
+    private boolean background;
+    private BroadcastReceiver stateReceiver;
 
     private static class Conn {
         BluetoothDevice device;
@@ -118,18 +127,29 @@ public class ChaxBlePlugin extends Plugin {
             return;
         }
         myId = hexToBytes(id);
-        String alias = Build.VERSION.SDK_INT >= 31 ? "ble" : "loc";
-        if (getPermissionState(alias) != PermissionState.GRANTED) {
-            requestPermissionForAlias(alias, call, "permsDone");
+        if (!permissionsGranted()) {
+            requestPermissionForAliases(neededAliases(), call, "permsDone");
             return;
         }
         begin(call);
     }
 
+    private String[] neededAliases() {
+        return Build.VERSION.SDK_INT >= 33 ? new String[] { Build.VERSION.SDK_INT >= 31 ? "ble" : "loc", "notif" }
+            : new String[] { Build.VERSION.SDK_INT >= 31 ? "ble" : "loc" };
+    }
+
+    /** Radio permission is mandatory; the notification permission is only nice to have. */
+    private boolean permissionsGranted() {
+        String radio = Build.VERSION.SDK_INT >= 31 ? "ble" : "loc";
+        if (getPermissionState(radio) != PermissionState.GRANTED) return false;
+        return Build.VERSION.SDK_INT < 33 || getPermissionState("notif") != PermissionState.PROMPT;
+    }
+
     @PermissionCallback
     private void permsDone(PluginCall call) {
-        String alias = Build.VERSION.SDK_INT >= 31 ? "ble" : "loc";
-        if (getPermissionState(alias) != PermissionState.GRANTED) {
+        String radio = Build.VERSION.SDK_INT >= 31 ? "ble" : "loc";
+        if (getPermissionState(radio) != PermissionState.GRANTED) {
             call.reject("Bluetooth permission denied");
             return;
         }
@@ -176,6 +196,7 @@ public class ChaxBlePlugin extends Plugin {
     // ---- lifecycle --------------------------------------------------------------
 
     private void begin(PluginCall call) {
+        wanted = true;
         if (running) {
             call.resolve();
             return;
@@ -183,24 +204,87 @@ public class ChaxBlePlugin extends Plugin {
         Context ctx = getContext();
         manager = (BluetoothManager) ctx.getSystemService(Context.BLUETOOTH_SERVICE);
         adapter = manager == null ? null : manager.getAdapter();
-        if (adapter == null || !adapter.isEnabled()) {
-            call.reject("Bluetooth is off");
+        if (adapter == null) {
+            call.reject("Bluetooth indisponible sur cet appareil");
             return;
         }
-        running = true;
-        openServer(ctx);
-        advertise();
-        scan();
+        if (stateReceiver == null) {
+            stateReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context c, Intent i) {
+                    int st = i.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR);
+                    if (st == BluetoothAdapter.STATE_OFF) {
+                        main.post(() -> { stopRadio(); emitState("Bluetooth coupé : activez-le pour rejoindre le mesh"); });
+                    } else if (st == BluetoothAdapter.STATE_ON && wanted && !running) {
+                        main.postDelayed(() -> { if (wanted && !running) startRadio(); }, 500);
+                    }
+                }
+            };
+            ctx.registerReceiver(stateReceiver, new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED));
+        }
+        if (!adapter.isEnabled()) {
+            emitState("Bluetooth coupé : activez-le pour rejoindre le mesh");
+            call.resolve(); // we will start by ourselves when it comes back
+            return;
+        }
+        startRadio();
+        startKeepAlive();
         call.resolve();
     }
 
-    private void shutdown() {
+    private void startRadio() {
+        if (running || adapter == null || !adapter.isEnabled()) return;
+        running = true;
+        openServer(getContext());
+        advertise();
+        scan();
+        emitState("");
+    }
+
+    /** Foreground service: keeps the process and the WebView alive when the screen goes off. */
+    private void startKeepAlive() {
+        try {
+            ContextCompat.startForegroundService(getContext(), new Intent(getContext(), MeshService.class));
+        } catch (Exception e) {
+            emitState("service d'arrière-plan refusé : " + e.getMessage());
+        }
+    }
+
+    private void stopRadio() {
         running = false;
         try { if (scanner != null) scanner.stopScan(scanCb); } catch (Exception ignored) {}
         try { if (advertiser != null) advertiser.stopAdvertising(advCb); } catch (Exception ignored) {}
         for (Conn c : new HashSet<>(byAddress.values())) drop(c);
+        connecting.clear();
         try { if (server != null) server.close(); } catch (Exception ignored) {}
         server = null;
+    }
+
+    @Override
+    protected void handleOnPause() {
+        background = true;
+        if (running) restartScan();
+    }
+
+    @Override
+    protected void handleOnResume() {
+        background = false;
+        if (running) restartScan();
+    }
+
+    private void restartScan() {
+        try { if (scanner != null) scanner.stopScan(scanCb); } catch (Exception ignored) {}
+        scan();
+    }
+
+    private void shutdown() {
+        wanted = false;
+        stopRadio();
+        try { getContext().stopService(new Intent(getContext(), MeshService.class)); } catch (Exception ignored) {}
+        if (stateReceiver != null) {
+            try { getContext().unregisterReceiver(stateReceiver); } catch (Exception ignored) {}
+            stateReceiver = null;
+        }
     }
 
     private void openServer(Context ctx) {
@@ -247,7 +331,9 @@ public class ChaxBlePlugin extends Plugin {
             return;
         }
         ScanFilter f = new ScanFilter.Builder().setServiceUuid(new ParcelUuid(SERVICE)).build();
-        ScanSettings s = new ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build();
+        ScanSettings s = new ScanSettings.Builder()
+            .setScanMode(background ? ScanSettings.SCAN_MODE_BALANCED : ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .build();
         scanner.startScan(Collections.singletonList(f), s, scanCb);
     }
 

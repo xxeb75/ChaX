@@ -603,6 +603,8 @@ function start(nickname: string): void {
   const transport: Transport = ble ?? relay ?? new BroadcastChannelTransport();
   node = new ChaxNode({ transport, identity: loadIdentity(), nickname });
   transport.onReceive(() => ping());
+  transport.onLinkUp((l) => console.info('[chax] link up', l));
+  transport.onLinkDown((l) => console.info('[chax] link down', l));
 
   $('welcome').classList.add('hide');
   $('app').classList.remove('hide');
@@ -611,6 +613,7 @@ function start(nickname: string): void {
 
   node.onMessage((m: ChatMessage) => {
     const who = m.nickname || m.from.slice(0, 8);
+    console.info('[chax] message', m.direct ? 'direct' : m.alert ? 'alert' : 'public', who);
     const line: Line = { id: m.id, mine: false, from: who, text: m.text, at: Date.now() };
     if (m.alert) push(ALERTS, { ...line, alert: true });
     else if (m.direct) push(m.from, line);

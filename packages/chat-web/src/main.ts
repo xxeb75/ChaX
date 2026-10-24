@@ -1,37 +1,49 @@
 import {
+  BleTransport,
   BroadcastChannelTransport,
   ChaxNode,
   PacketType,
+  WebSocketTransport,
   createIdentity,
   fromHex,
   identityFromSecrets,
   toHex,
+  type BleBridge,
   type ChatMessage,
   type Identity,
+  type Transport,
 } from '../../core/src';
 
-type Status = 'pending' | 'sent' | 'delivered';
+type Status = 'pending' | 'transit' | 'delivered' | 'read';
 
 interface Line {
-  id?: string; // hex msgId, for direct messages we sent
+  id?: string; // hex msgId
   mine: boolean;
   from: string;
   text: string;
   at: number;
   alert?: boolean;
-  status?: Status;
+  status?: Status; // our own direct messages
+  readSent?: boolean; // a received direct message we already acknowledged as read
 }
 
 const PUBLIC = 'public';
 const ALERTS = 'alerts';
 const GROUP_GAP_MS = 5 * 60 * 1000;
+const WIDE = '(min-width: 761px)';
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
-// ---- storage (per tab, so several tabs act as distinct nodes; best effort) ------
+// ---- storage -------------------------------------------------------------------
+// Native app: one WebView, so identity and history must outlive the process (localStorage).
+// Browser tabs: sessionStorage, so several tabs act as distinct nodes.
+
+const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean; Plugins?: Record<string, any> } }).Capacitor;
+const native = !!cap?.isNativePlatform?.();
+const store = (): Storage => (native ? localStorage : sessionStorage);
 
 function load<T>(key: string): T | undefined {
   try {
-    const v = sessionStorage.getItem(key);
+    const v = store().getItem(key);
     return v ? (JSON.parse(v) as T) : undefined;
   } catch {
     return undefined;
@@ -39,7 +51,7 @@ function load<T>(key: string): T | undefined {
 }
 function save(key: string, v: unknown): void {
   try {
-    sessionStorage.setItem(key, JSON.stringify(v));
+    store().setItem(key, JSON.stringify(v));
   } catch {
     /* ignore */
   }
@@ -53,32 +65,28 @@ function loadIdentity(): Identity {
   return id;
 }
 
-// ---- state --------------------------------------------------------------------
+// ---- state ---------------------------------------------------------------------
 
 const history: Record<string, Line[]> = load('chax.history') ?? {};
+for (const list of Object.values(history)) {
+  for (const l of list) if ((l.status as string) === 'sent') l.status = 'transit'; // older builds
+}
 const unread: Record<string, number> = {};
 const names = new Map<string, string>(Object.entries(load<Record<string, string>>('chax.names') ?? {}));
 let current = PUBLIC;
+let cursor = PUBLIC; // keyboard cursor in the list
+let query = '';
 let node: ChaxNode;
+let relay: WebSocketTransport | undefined;
+let ble: BleTransport | undefined;
+let bleError = '';
 let stick = true;
 
-function persist(): void {
-  save('chax.history', history);
-}
+const wide = () => window.matchMedia(WIDE).matches;
+const isPeerKey = (k: string) => k !== PUBLIC && k !== ALERTS;
+const persist = () => save('chax.history', history);
 
-function push(conv: string, line: Line): void {
-  const list = (history[conv] ??= []);
-  list.push(line);
-  if (list.length > 200) list.shift();
-  persist();
-  const visible = conv === current && !document.hidden && $('app').dataset.view === 'chat';
-  if (conv === current) renderChat(line.mine);
-  if (!line.mine && !visible) unread[conv] = (unread[conv] ?? 0) + 1;
-  renderList();
-  updateTitle();
-}
-
-// ---- small helpers ------------------------------------------------------------
+// ---- helpers -------------------------------------------------------------------
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -87,36 +95,8 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
   return e;
 }
 
-function icon(name: string, small = false): SVGSVGElement {
-  const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  s.setAttribute('class', small ? 'i s' : 'i');
-  s.setAttribute('aria-hidden', 'true');
-  const u = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-  u.setAttribute('href', `#i-${name}`);
-  s.append(u);
-  return s;
-}
-
-function hue(key: string): number {
-  let h = 0;
-  for (const c of key) h = (h * 31 + c.charCodeAt(0)) % 360;
-  return h;
-}
-
-function avatar(key: string, label: string, presence?: boolean): HTMLElement {
-  const a = el('span', 'av');
-  if (key === PUBLIC) {
-    a.classList.add('room');
-    a.append(icon('hash'));
-  } else if (key === ALERTS) {
-    a.classList.add('room', 'alert');
-    a.append(icon('alert'));
-  } else {
-    a.style.setProperty('--h', String(hue(key)));
-    a.append(document.createTextNode((label.trim()[0] ?? '?').toUpperCase()));
-    if (presence !== undefined) a.append(el('span', `pres${presence ? ' on' : ''}`));
-  }
-  return a;
+function span(cls: string, text: string): HTMLSpanElement {
+  return el('span', cls, text);
 }
 
 function clock(t: number): string {
@@ -125,9 +105,7 @@ function clock(t: number): string {
 
 function stamp(t: number): string {
   const d = new Date(t);
-  const now = new Date();
-  if (d.toDateString() === now.toDateString()) return clock(t);
-  return d.toLocaleDateString([], { day: 'numeric', month: 'short' });
+  return d.toDateString() === new Date().toDateString() ? clock(t) : d.toLocaleDateString([], { day: 'numeric', month: 'short' });
 }
 
 function dayLabel(t: number): string {
@@ -135,38 +113,111 @@ function dayLabel(t: number): string {
   const now = new Date();
   const y = new Date(now);
   y.setDate(now.getDate() - 1);
-  if (d.toDateString() === now.toDateString()) return "Aujourd'hui";
-  if (d.toDateString() === y.toDateString()) return 'Hier';
+  if (d.toDateString() === now.toDateString()) return "aujourd'hui";
+  if (d.toDateString() === y.toDateString()) return 'hier';
   return d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
 }
 
-function spaced(hex: string): string {
-  return hex.replace(/(.{4})/g, '$1 ').trim();
+const spaced = (hex: string) => hex.replace(/(.{4})/g, '$1 ').trim();
+const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const neighborIds = () => new Set(node.neighbors.values());
+const labelOf = (k: string) => (k === PUBLIC ? 'public' : k === ALERTS ? 'alertes' : (names.get(k) ?? k.slice(0, 8)));
+
+let flashTimer: number | undefined;
+function flash(msg: string): void {
+  $('flash').textContent = msg;
+  clearTimeout(flashTimer);
+  flashTimer = window.setTimeout(() => ($('flash').textContent = ''), 2200);
 }
 
-let toastTimer: number | undefined;
-function toast(msg: string): void {
-  const t = $('toast');
-  t.textContent = msg;
-  t.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => t.classList.remove('show'), 1800);
+function push(conv: string, line: Line): void {
+  const list = (history[conv] ??= []);
+  list.push(line);
+  if (list.length > 200) list.shift();
+  persist();
+  const seen = conv === current && viewing();
+  if (conv === current) renderChat(line.mine);
+  if (!line.mine && !seen) unread[conv] = (unread[conv] ?? 0) + 1;
+  renderList();
+  updateTitle();
+  if (seen) sendReceipts();
 }
 
-function neighborIds(): Set<string> {
-  return new Set(node.neighbors.values());
+/** The conversation is on screen and the app is in the foreground. */
+function viewing(): boolean {
+  return !document.hidden && (wide() || $('app').dataset.view === 'chat');
 }
 
-function isPeerKey(k: string): boolean {
-  return k !== PUBLIC && k !== ALERTS;
+// ---- read receipts -------------------------------------------------------------
+
+function sendReceipts(): void {
+  if (!isPeerKey(current) || !viewing()) return;
+  const fresh = (history[current] ?? []).filter((l) => !l.mine && l.id && !l.readSent);
+  if (!fresh.length) return;
+  node.sendRead(current, fresh.map((l) => l.id!));
+  for (const l of fresh) l.readSent = true;
+  persist();
 }
 
-// ---- conversation list ---------------------------------------------------------
+// ---- sonde: one glyph per known device, bright when in range --------------------
 
-let listSig = '';
-function renderList(): void {
+let pingTimer: number | undefined;
+let lastPing = 0;
+function ping(): void {
+  const now = Date.now();
+  if (now - lastPing < 300) return;
+  lastPing = now;
+  const s = $('sonde');
+  s.classList.remove('ping');
+  void s.offsetWidth; // restart the animation
+  s.classList.add('ping');
+  clearTimeout(pingTimer);
+  pingTimer = window.setTimeout(() => s.classList.remove('ping'), 1400);
+}
+
+function renderSonde(): void {
   const online = neighborIds();
-  const hasNeighbors = node.neighbors.size > 0;
+  const ids = [...node.peers.keys()].filter((k) => k !== node.peerId).sort((a, b) => Number(online.has(b)) - Number(online.has(a)));
+  const s = $('sonde');
+  const shown = ids.slice(0, 12);
+  const sig = shown.map((k) => (online.has(k) ? '1' : '0')).join('');
+  if (s.dataset.sig !== sig) {
+    s.dataset.sig = sig;
+    s.replaceChildren();
+    if (!shown.length) shown.push('');
+    shown.forEach((k, i) => {
+      const g = el('i', online.has(k) ? 'on' : '', online.has(k) ? '•' : '·');
+      g.style.setProperty('--i', String(i));
+      s.append(g);
+    });
+  }
+  const n = node.neighbors.size;
+  const carried = node.store.all(Date.now()).filter((p) => p.type !== PacketType.ANNOUNCE).length;
+  let txt: string;
+  if (ble && bleError) txt = `bluetooth indisponible · ${bleError}`;
+  else if (relay && !relay.connected) txt = 'relais injoignable · nouvelle tentative';
+  else if (n) txt = `${n} à portée${carried ? ` · ${carried} porté${carried > 1 ? 's' : ''}` : ''}`;
+  else txt = 'personne à portée';
+  if ($('meshTxt').textContent !== txt) $('meshTxt').textContent = txt;
+}
+
+// ---- conversation list: the depth queue -----------------------------------------
+
+interface Row {
+  k: string;
+  label: string;
+  last?: Line;
+  un: number;
+  on?: boolean;
+}
+
+function lastOf(k: string): Line | undefined {
+  const l = history[k];
+  return l?.[l.length - 1];
+}
+
+function buildRows(): Row[] {
+  const online = neighborIds();
   let renamed = false;
   for (const [id, p] of node.peers) {
     const nm = p.nickname || id.slice(0, 8);
@@ -177,98 +228,101 @@ function renderList(): void {
   }
   if (renamed) save('chax.names', Object.fromEntries(names));
 
-  // mesh status
-  const mesh = $('mesh');
-  mesh.classList.toggle('on', hasNeighbors);
-  const n = node.neighbors.size;
-  const carried = node.store.all(Date.now()).filter((p) => p.type !== PacketType.ANNOUNCE).length;
-  $('meshTitle').textContent = hasNeighbors ? `${n} appareil${n > 1 ? 's' : ''} à portée` : 'Personne à portée';
-  $('meshSub').textContent = hasNeighbors
-    ? carried > 0
-      ? `${carried} message${carried > 1 ? 's' : ''} porté${carried > 1 ? 's' : ''} pour d’autres`
-      : 'Vos messages partent tout de suite'
-    : 'Vos messages privés attendent un voisin';
-
-  const keys = [...new Set([...node.peers.keys()].filter((k) => k !== node.peerId).concat(Object.keys(history).filter(isPeerKey)))];
-  const last = (k: string) => history[k]?.[history[k]!.length - 1];
-  keys.sort((a, b) => (last(b)?.at ?? 0) - (last(a)?.at ?? 0) || (names.get(a) ?? '').localeCompare(names.get(b) ?? ''));
-
-  const rows = [PUBLIC, ALERTS, ...keys].map((k) => ({
+  const peerKeys = [...new Set([...node.peers.keys()].filter((k) => k !== node.peerId).concat(Object.keys(history).filter(isPeerKey)))];
+  const rows: Row[] = [PUBLIC, ALERTS, ...peerKeys].map((k) => ({
     k,
-    label: k === PUBLIC ? 'Public' : k === ALERTS ? 'Alertes' : (names.get(k) ?? k.slice(0, 8)),
-    pv: last(k),
+    label: labelOf(k),
+    last: lastOf(k),
     un: unread[k] ?? 0,
     on: isPeerKey(k) ? online.has(k) : undefined,
-    cur: k === current,
   }));
-  const sig = JSON.stringify(rows);
+  const order = (r: Row) => (r.k === PUBLIC ? 0 : r.k === ALERTS ? 1 : 2);
+  rows.sort(
+    (a, b) =>
+      (b.last?.at ?? 0) - (a.last?.at ?? 0) ||
+      order(a) - order(b) ||
+      Number(b.on ?? false) - Number(a.on ?? false) ||
+      a.label.localeCompare(b.label),
+  );
+  const q = fold(query.trim());
+  return q ? rows.filter((r) => fold(r.label).includes(q)) : rows;
+}
+
+let listSig = '';
+function renderList(): void {
+  renderSonde();
+  const rows = buildRows();
+  const typing = document.activeElement === $('q');
+  const highlighted = typing ? cursor : wide() ? current : '';
+  const sig = JSON.stringify([rows, highlighted, current, query]);
+  $('count').textContent = String(rows.length);
   if (sig === listSig) return;
   listSig = sig;
 
   const nav = $('convs');
-  const hadFocus = nav.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.k : undefined;
+  const focused = nav.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.k : undefined;
   nav.replaceChildren();
-  nav.append(el('div', 'group', 'Salons'));
-  for (const r of rows.slice(0, 2)) nav.append(row(r));
-  nav.append(el('div', 'group', `Personnes (${keys.length})`));
-  if (!keys.length) {
-    nav.append(el('p', 'empty-list', 'Personne pour l’instant. Les appareils proches apparaîtront ici dès qu’ils seront détectés.'));
-  }
-  for (const r of rows.slice(2)) nav.append(row(r));
-  if (hadFocus) nav.querySelector<HTMLElement>(`[data-k="${CSS.escape(hadFocus)}"]`)?.focus();
+  if (!rows.length) nav.append(el('p', 'none', 'Aucune conversation ne correspond. Effacez la recherche pour tout revoir.'));
+  rows.forEach((r, i) => nav.append(rowEl(r, i, r.k === highlighted)));
+  if (focused) nav.querySelector<HTMLElement>(`[data-k="${CSS.escape(focused)}"]`)?.focus();
 }
 
-function row(r: { k: string; label: string; pv?: Line; un: number; on?: boolean; cur: boolean }): HTMLButtonElement {
-  const b = el('button', `conv${r.un ? ' unread' : ''}`);
+function rowEl(r: Row, i: number, selected: boolean): HTMLButtonElement {
+  const tier = i === 0 ? 0 : i <= 2 ? 1 : i <= 5 ? 2 : 3;
+  const b = el('button', `row d${tier}${selected ? ' selected' : ''}${r.k === ALERTS ? ' alertRow' : ''}`);
   b.type = 'button';
   b.dataset.k = r.k;
-  if (r.cur) b.setAttribute('aria-current', 'true');
-  b.append(avatar(r.k, r.label, r.on));
-  const txt = el('span', 'txt');
-  const top = el('span', 'row');
-  top.append(el('span', 'nm', r.label));
-  if (r.pv) top.append(el('span', 'tm', stamp(r.pv.at)));
-  const bottom = el('span', 'row');
-  const preview = r.pv ? `${r.pv.mine ? 'Vous : ' : r.k === PUBLIC || r.k === ALERTS ? `${r.pv.from} : ` : ''}${r.pv.text}` : emptyPreview(r.k, r.on);
-  bottom.append(el('span', 'pv', preview));
-  if (r.un) bottom.append(el('span', `badge${r.k === ALERTS ? ' alert' : ''}`, String(r.un)));
-  txt.append(top, bottom);
-  b.append(txt);
+  if (r.k === current) b.setAttribute('aria-current', 'true');
+
+  const l1 = el('span', 'l1');
+  const glyph = r.k === PUBLIC ? '#' : r.k === ALERTS ? '!' : r.on ? '•' : '·';
+  const g = span(`glyph${r.on ? ' on' : ''}`, glyph);
+  g.setAttribute('aria-hidden', 'true');
+  l1.append(g, span('nm', r.label));
+  if (isPeerKey(r.k)) l1.append(span('sr', r.on ? ', à portée' : ', hors de portée'));
+  l1.append(span('fill', ''));
+
+  const meta = span('meta', '');
+  if (r.un) meta.append(span('n', `+${r.un}`));
+  if (tier === 0 && !selected) meta.append(span('hint', 'ouvrir ›'));
+  else if (r.last) meta.append(document.createTextNode(stamp(r.last.at)));
+  l1.append(meta);
+  b.append(l1);
+
+  if (tier === 0 && r.last) {
+    const who = r.last.mine ? 'vous' : r.last.from;
+    b.append(span('pv', `${who} › ${r.last.text.replace(/\s+/g, ' ')}`));
+  }
   b.onclick = () => open(r.k);
   return b;
 }
 
-function emptyPreview(k: string, on?: boolean): string {
-  if (k === PUBLIC) return 'Visible par tout le mesh';
-  if (k === ALERTS) return 'Urgences signées';
-  return on ? 'À portée · dites bonjour' : 'Hors de portée';
-}
-
-// ---- chat pane -----------------------------------------------------------------
+// ---- chat pane --------------------------------------------------------------------
 
 function open(key: string): void {
   const wasList = $('app').dataset.view === 'list';
   current = key;
+  cursor = key;
   unread[key] = 0;
   stick = true;
   $('app').dataset.view = 'chat';
-  if (wasList && window.matchMedia('(max-width: 760px)').matches) history_push();
+  if (wasList && !wide()) {
+    try {
+      window.history.pushState({ chat: true }, '');
+    } catch {
+      /* ignore */
+    }
+  }
   renderChat(true);
   renderList();
   updateTitle();
-  if (!window.matchMedia('(max-width: 760px)').matches) ($('text') as HTMLTextAreaElement).focus();
-}
-
-function history_push(): void {
-  try {
-    window.history.pushState({ chat: true }, '');
-  } catch {
-    /* ignore */
-  }
+  sendReceipts();
+  if (wide()) ($('text') as HTMLTextAreaElement).focus();
 }
 
 function backToList(): void {
   $('app').dataset.view = 'list';
+  renderList();
 }
 $('back').onclick = () => {
   if (window.history.state?.chat) window.history.back();
@@ -278,65 +332,98 @@ window.addEventListener('popstate', backToList);
 
 function statusOf(l: Line): Status | undefined {
   if (!l.mine || !l.status) return undefined;
-  if (l.status === 'pending' && node.neighbors.size > 0) return 'sent';
+  if (l.status === 'pending' && node.neighbors.size > 0) return 'transit';
   return l.status;
 }
 
-function metaFor(l: Line): HTMLElement {
-  const m = el('span', 'meta');
-  const st = statusOf(l);
-  m.append(document.createTextNode(clock(l.at)));
-  if (st === 'delivered') {
-    m.classList.add('ok');
-    m.append(icon('checks', true), document.createTextNode('Remis'));
-  } else if (st === 'sent') {
-    m.append(icon('check', true), document.createTextNode('Envoyé'));
-  } else if (st === 'pending') {
-    m.classList.add('pending');
-    m.append(icon('clock', true), document.createTextNode('En attente d’un voisin'));
-  }
-  return m;
+function statusEl(st: Status): HTMLElement {
+  const s = el('div', `st${st === 'read' ? ' read' : st === 'pending' ? ' wait' : ''}`);
+  const glyph = st === 'pending' ? '…' : st === 'transit' ? '›' : '››';
+  const word = st === 'pending' ? "en attente d'un voisin" : st === 'transit' ? 'en transit' : st === 'delivered' ? 'remis' : 'lu';
+  const g = span('g', glyph);
+  g.setAttribute('aria-hidden', 'true');
+  s.append(g, span('w', word));
+  return s;
+}
+
+function header(): void {
+  const online = neighborIds();
+  $('title').textContent = current === PUBLIC ? 'public' : current === ALERTS ? 'alertes' : labelOf(current);
+  const sub = $('sub');
+  sub.replaceChildren();
+  const left =
+    current === PUBLIC
+      ? span('', `${node.neighbors.size} à portée`)
+      : current === ALERTS
+        ? span('', 'signées · prioritaires')
+        : span(online.has(current) ? 'ivory' : '', online.has(current) ? 'à portée' : 'hors de portée');
+  const right =
+    current === PUBLIC
+      ? 'visible par tout le mesh'
+      : current === ALERTS
+        ? 'portées 24 h par les relais'
+        : online.has(current)
+          ? 'chiffré de bout en bout'
+          : 'un relais portera vos messages';
+  sub.append(left, span('fill', ''), span('', right));
+}
+
+function composer(): void {
+  const alert = current === ALERTS;
+  $('composer').classList.toggle('alert', alert);
+  const input = $<HTMLTextAreaElement>('text');
+  input.placeholder = alert ? 'lieu, danger, besoin : bref et précis' : current === PUBLIC ? 'écrire au mesh' : `écrire à ${labelOf(current)}`;
+  $('sendLbl').textContent = alert ? "diffuser l'alerte" : 'envoyer';
+  const hint = $('hint');
+  hint.replaceChildren();
+  hint.append(
+    document.createTextNode(alert ? 'part chez tout le monde, y compris ceux qui arriveront plus tard' : isPeerKey(current) ? 'chiffré' : 'visible par tous'),
+  );
+  if (!alert) hint.append(span('kb', ' · entrée envoie, maj+entrée saute une ligne'));
+  syncSend();
 }
 
 function renderChat(forceBottom = false): void {
   const box = $('msgs');
+  const log = $('log');
   const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
   const list = history[current] ?? [];
-  box.replaceChildren();
+  log.replaceChildren();
   header();
   composer();
 
   if (!list.length) {
     const e = el('div', 'empty');
-    e.append(icon(current === ALERTS ? 'alert' : current === PUBLIC ? 'radio' : 'lock'));
     if (current === PUBLIC) {
-      e.append(el('b', undefined, 'Le salon de tout le mesh'));
-      e.append(el('span', undefined, 'Chaque appareil à portée reçoit vos messages et les fait suivre. Ouvrez ChaX dans un autre onglet pour essayer.'));
+      e.append(span('t', 'le salon de tout le mesh'));
+      e.append(el('div', undefined, 'Chaque appareil à portée reçoit vos messages et les fait suivre.'));
     } else if (current === ALERTS) {
-      e.append(el('b', undefined, 'Aucune alerte'));
-      e.append(el('span', undefined, 'Une alerte est signée, prioritaire, et portée par les relais jusqu’à 24 h : même ceux qui arrivent plus tard la reçoivent.'));
+      e.append(span('t', 'aucune alerte'));
+      e.append(el('div', undefined, 'Une alerte est signée et prioritaire. Les relais la portent 24 h : même ceux qui arrivent plus tard la reçoivent.'));
     } else {
-      e.append(el('b', undefined, `Dites bonjour à ${names.get(current) ?? 'ce contact'}`));
-      e.append(el('span', undefined, 'Vos messages sont chiffrés. Si la personne est hors de portée, un relais les porte jusqu’à son retour.'));
+      e.append(span('t', `dites bonjour à ${labelOf(current)}`));
+      e.append(el('div', undefined, 'Vos messages sont chiffrés. Hors de portée, un relais les porte jusqu’au retour, et vous voyez où ils en sont : en transit, remis, lu.'));
     }
-    box.append(e);
+    log.append(e);
   }
 
+  const lastRead = [...list].reverse().find((l) => statusOf(l) === 'read');
   let prev: Line | undefined;
-  for (const l of list) {
-    if (!prev || new Date(prev.at).toDateString() !== new Date(l.at).toDateString()) box.append(el('div', 'day', dayLabel(l.at)));
-    const cont = !!prev && prev.mine === l.mine && prev.from === l.from && l.at - prev.at < GROUP_GAP_MS && new Date(prev.at).toDateString() === new Date(l.at).toDateString();
-    const m = el('div', `m${l.mine ? ' mine' : ''}${l.alert ? ' alert' : ''}${cont ? ' cont' : ''}`);
-    if (!l.mine && !cont && current !== names.get(current)) {
-      if (!isPeerKey(current)) m.append(el('span', 'who', l.from));
-    }
-    m.append(el('div', 'b', l.text));
-    const nextSame = list[list.indexOf(l) + 1];
-    const lastOfGroup = !nextSame || nextSame.mine !== l.mine || nextSame.from !== l.from || nextSame.at - l.at >= GROUP_GAP_MS;
-    if (lastOfGroup || statusOf(l) === 'pending') m.append(metaFor(l));
-    box.append(m);
+  list.forEach((l, i) => {
+    const fromEnd = list.length - 1 - i;
+    if (!prev || new Date(prev.at).toDateString() !== new Date(l.at).toDateString()) log.append(el('div', 'day', dayLabel(l.at)));
+    const cont =
+      !!prev && !l.alert && !prev.alert && prev.mine === l.mine && prev.from === l.from && l.at - prev.at < GROUP_GAP_MS && new Date(prev.at).toDateString() === new Date(l.at).toDateString();
+    const tier = fromEnd === 0 ? 0 : fromEnd <= 2 ? 1 : 2;
+    const m = el('div', `msg t${tier} ${l.mine ? 'mine' : 'theirs'}${l.alert ? ' alert' : ''}${cont ? ' cont' : ''}`);
+    if (l.alert) m.append(span('who', `alerte · ${l.mine ? 'vous' : l.from} · ${clock(l.at)}`));
+    else if (!cont) m.append(span('who', `${l.mine ? 'vous' : l.from} · ${clock(l.at)}`));
+    m.append(span('txt', l.text));
+    const st = statusOf(l);
+    if (st && (st !== 'read' || l === lastRead)) m.append(statusEl(st));
+    log.append(m);
     prev = l;
-  }
+  });
 
   if (forceBottom || stick || nearBottom) {
     box.scrollTop = box.scrollHeight;
@@ -356,35 +443,6 @@ $('jump').onclick = () => {
   b.scrollTop = b.scrollHeight;
 };
 
-function header(): void {
-  const online = neighborIds();
-  $('chAv').replaceWith(Object.assign(avatar(current, names.get(current) ?? '', isPeerKey(current) ? online.has(current) : undefined), { id: 'chAv' }));
-  const title = current === PUBLIC ? 'Public' : current === ALERTS ? 'Alertes' : (names.get(current) ?? current.slice(0, 8));
-  $('title').textContent = title;
-  let sub = '';
-  if (current === PUBLIC) sub = `${node.neighbors.size} à portée · visible par tout le mesh`;
-  else if (current === ALERTS) sub = 'Signées, prioritaires, portées par les relais';
-  else sub = online.has(current) ? 'À portée · chiffré de bout en bout' : 'Hors de portée · un relais portera vos messages';
-  $('sub').textContent = sub;
-}
-
-function composer(): void {
-  const form = $('composer');
-  const alert = current === ALERTS;
-  form.classList.toggle('alert', alert);
-  const input = $<HTMLTextAreaElement>('text');
-  input.placeholder = alert ? 'Lieu, danger, besoin : soyez précis et bref' : current === PUBLIC ? 'Écrire au mesh' : `Message à ${names.get(current) ?? 'ce contact'}`;
-  const lbl = $('sendLbl');
-  lbl.textContent = alert ? 'Diffuser l’alerte' : 'Envoyer';
-  $('sendBtn').setAttribute('aria-label', alert ? 'Diffuser l’alerte' : 'Envoyer');
-  const hint = $('hint');
-  hint.replaceChildren();
-  if (alert) hint.append(icon('alert', true), document.createTextNode('Part chez tout le monde, y compris les appareils qui arriveront plus tard (24 h).'));
-  else if (current === PUBLIC) hint.append(icon('radio', true), document.createTextNode('Entrée pour envoyer · Maj+Entrée pour un retour à la ligne'));
-  else hint.append(icon('lock', true), document.createTextNode('Chiffré de bout en bout · Entrée pour envoyer'));
-  syncSend();
-}
-
 function syncSend(): void {
   ($('sendBtn') as HTMLButtonElement).disabled = !$<HTMLTextAreaElement>('text').value.trim();
 }
@@ -392,7 +450,7 @@ function syncSend(): void {
 function autosize(): void {
   const t = $<HTMLTextAreaElement>('text');
   t.style.height = 'auto';
-  t.style.height = `${Math.min(140, t.scrollHeight)}px`;
+  t.style.height = `${Math.min(144, t.scrollHeight)}px`;
 }
 
 function updateTitle(): void {
@@ -416,9 +474,9 @@ function submit(): void {
   } else {
     try {
       const id = toHex(node.sendDirect(current, text));
-      push(current, { ...base, id, status: node.neighbors.size ? 'sent' : 'pending' });
+      push(current, { ...base, id, status: node.neighbors.size ? 'transit' : 'pending' });
     } catch {
-      toast('Clé de ce contact inconnue : réessayez dans un instant');
+      flash('clé inconnue, réessayez');
       return;
     }
   }
@@ -441,60 +499,154 @@ $('text').addEventListener('keydown', (ev) => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault();
     submit();
+  } else if (e.key === 'Escape') {
+    ($('text') as HTMLTextAreaElement).blur();
+    if (!wide()) $('back').click();
   }
 });
+
+$('q').addEventListener('input', () => {
+  query = ($('q') as HTMLInputElement).value;
+  const rows = buildRows();
+  if (rows.length && !rows.some((r) => r.k === cursor)) cursor = rows[0]!.k;
+  renderList();
+});
+$('q').addEventListener('focus', () => renderList());
+$('q').addEventListener('blur', () => renderList());
+$('q').addEventListener('keydown', (ev) => {
+  const e = ev as KeyboardEvent;
+  const rows = buildRows();
+  const i = Math.max(0, rows.findIndex((r) => r.k === cursor));
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const n = rows[Math.min(rows.length - 1, Math.max(0, i + (e.key === 'ArrowDown' ? 1 : -1)))];
+    if (n) cursor = n.k;
+    renderList();
+    $('convs').querySelector<HTMLElement>('.selected')?.scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    const target = rows.find((r) => r.k === cursor) ?? rows[0];
+    if (target) {
+      ($('q') as HTMLInputElement).value = '';
+      query = '';
+      open(target.k);
+    }
+  } else if (e.key === 'Escape') {
+    ($('q') as HTMLInputElement).value = '';
+    query = '';
+    ($('q') as HTMLInputElement).blur();
+    renderList();
+  }
+});
+document.addEventListener('keydown', (ev) => {
+  const t = ev.target as HTMLElement;
+  if (ev.key === '/' && t.tagName !== 'INPUT' && t.tagName !== 'TEXTAREA') {
+    ev.preventDefault();
+    if (!wide() && $('app').dataset.view !== 'list') $('back').click();
+    $('q').focus();
+  }
+});
+
 $('fp').onclick = async () => {
   try {
     await navigator.clipboard.writeText(node.peerId);
-    toast('Empreinte copiée');
+    flash('empreinte copiée');
   } catch {
-    toast(`Empreinte : ${spaced(node.peerId)}`);
+    flash(spaced(node.peerId));
   }
 };
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && $('app').dataset.view === 'chat') {
+  if (viewing()) {
     unread[current] = 0;
     renderList();
     updateTitle();
+    sendReceipts();
   }
+});
+window.matchMedia(WIDE).addEventListener('change', () => {
+  listSig = '';
+  renderList();
 });
 
 // ---- boot ----------------------------------------------------------------------
 
+function capacitorBridge(p: any): BleBridge {
+  const toB64 = (b: Uint8Array) => {
+    let t = '';
+    for (const x of b) t += String.fromCharCode(x);
+    return btoa(t);
+  };
+  const fromB64 = (t: string) => Uint8Array.from(atob(t), (c) => c.charCodeAt(0));
+  return {
+    start: (nodeId) => p.start({ nodeId }),
+    stop: () => p.stop(),
+    send: (link, bytes) => p.send({ link, data: toB64(bytes) }),
+    onLinkUp: (cb) => void p.addListener('linkUp', (e: { link: string }) => cb(e.link)),
+    onLinkDown: (cb) => void p.addListener('linkDown', (e: { link: string }) => cb(e.link)),
+    onFrame: (cb) => void p.addListener('frame', (e: { link: string; data: string }) => cb(e.link, fromB64(e.data))),
+    onError: (cb) => void p.addListener('error', (e: { message: string }) => cb(e.message)),
+  };
+}
+
+function setStatus(key: string, id: string, status: Status): void {
+  const l = history[key]?.find((x) => x.id === id);
+  if (l && l.status !== 'read') l.status = status;
+}
+
 function start(nickname: string): void {
-  const transport = new BroadcastChannelTransport();
+  const param = new URLSearchParams(location.search).get('relay');
+  if (param !== null) {
+    relay = new WebSocketTransport(/^wss?:/.test(param) ? param : `ws://${location.hostname}:8787`);
+    relay.onStatus(() => renderList());
+  }
+  if (native && cap?.Plugins?.ChaxBle) ble = new BleTransport(capacitorBridge(cap.Plugins.ChaxBle));
+  const transport: Transport = ble ?? relay ?? new BroadcastChannelTransport();
   node = new ChaxNode({ transport, identity: loadIdentity(), nickname });
+  transport.onReceive(() => ping());
+
   $('welcome').classList.add('hide');
   $('app').classList.remove('hide');
   $('meName').textContent = nickname;
   $('meFp').textContent = spaced(node.peerId);
-  $('meAv').replaceWith(Object.assign(avatar(node.peerId, nickname), { id: 'meAv' }));
 
   node.onMessage((m: ChatMessage) => {
     const who = m.nickname || m.from.slice(0, 8);
-    const line: Line = { mine: false, from: who, text: m.text, at: Date.now() };
+    const line: Line = { id: m.id, mine: false, from: who, text: m.text, at: Date.now() };
     if (m.alert) push(ALERTS, { ...line, alert: true });
     else if (m.direct) push(m.from, line);
     else push(PUBLIC, line);
   });
-  node.onDelivered((id) => {
-    for (const list of Object.values(history)) {
-      const l = list.find((x) => x.id === id);
-      if (l) l.status = 'delivered';
-    }
+  const mark = (status: Status) => (id: string) => {
+    for (const k of Object.keys(history)) setStatus(k, id, status);
     persist();
     renderChat();
-  });
+  };
+  node.onDelivered(mark('delivered'));
+  node.onRead(mark('read'));
+
+  if (ble) {
+    ble.onError((m) => {
+      bleError = m;
+      renderList();
+    });
+    ble.start().then(
+      () => (bleError = ''),
+      (e: Error) => {
+        bleError = e?.message ?? String(e);
+        renderList();
+      },
+    );
+  }
 
   setInterval(() => {
     renderList();
     header();
-    // pending -> sent as soon as a neighbour shows up
+    sendReceipts();
+    // pending -> in transit as soon as a neighbour shows up
     if (isPeerKey(current) && (history[current] ?? []).some((l) => l.status === 'pending')) renderChat();
   }, 1000);
 
-  const wide = !window.matchMedia('(max-width: 760px)').matches;
-  $('app').dataset.view = wide ? 'chat' : 'list';
+  $('app').dataset.view = wide() ? 'chat' : 'list';
   renderChat(true);
   renderList();
 }

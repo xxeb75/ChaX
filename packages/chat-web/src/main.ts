@@ -5,29 +5,12 @@ import {
   MAX_ATTACHMENT,
   PacketType,
   WebSocketTransport,
-  createIdentity,
-  fromHex,
-  identityFromSecrets,
   toHex,
   type BleBridge,
   type ChatMessage,
-  type Identity,
   type Transport,
 } from '../../core/src';
-
-type Status = 'pending' | 'transit' | 'delivered' | 'read';
-
-interface Line {
-  id?: string; // hex msgId
-  mine: boolean;
-  from: string;
-  text: string;
-  at: number;
-  alert?: boolean;
-  status?: Status; // our own direct messages
-  readSent?: boolean; // a received direct message we already acknowledged as read
-  file?: { name: string; mime: string; size: number }; // bytes live in IndexedDB under `id`
-}
+import { ALERTS, MAX_LINES, IMAGE_MIMES, PUBLIC, cap, idb, load, loadIdentity, native, putFile, save, type Line, type Status } from './store';
 
 interface Incoming {
   key: string;
@@ -38,69 +21,15 @@ interface Incoming {
   dismissed?: boolean;
 }
 
-const PUBLIC = 'public';
-const ALERTS = 'alerts';
 const GROUP_GAP_MS = 5 * 60 * 1000;
 const WIDE = '(min-width: 761px)';
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
-// ---- storage -------------------------------------------------------------------
-// Native app: one WebView, so identity and history must outlive the process (localStorage).
-// Browser tabs: sessionStorage, so several tabs act as distinct nodes.
-
-const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean; Plugins?: Record<string, any> } }).Capacitor;
-const native = !!cap?.isNativePlatform?.();
-const store = (): Storage => (native ? localStorage : sessionStorage);
-
-function load<T>(key: string): T | undefined {
-  try {
-    const v = store().getItem(key);
-    return v ? (JSON.parse(v) as T) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-function save(key: string, v: unknown): void {
-  try {
-    store().setItem(key, JSON.stringify(v));
-  } catch {
-    /* ignore */
-  }
-}
-
-function loadIdentity(): Identity {
-  const s = load<{ ed: string; x: string }>('chax.identity');
-  if (s) return identityFromSecrets(fromHex(s.ed), fromHex(s.x));
-  const id = createIdentity();
-  save('chax.identity', { ed: toHex(id.edPriv), x: toHex(id.xPriv) });
-  return id;
-}
-
 // ---- attachments: bytes in IndexedDB, only metadata in the history ---------------------
 
-const IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 const MAX_SIDE = 1024;
-let dbp: Promise<IDBDatabase> | undefined;
 const urls = new Map<string, string>();
 
-function db(): Promise<IDBDatabase> {
-  dbp ??= new Promise((res, rej) => {
-    const r = indexedDB.open('chax-files', 1);
-    r.onupgradeneeded = () => r.result.createObjectStore('f');
-    r.onsuccess = () => res(r.result);
-    r.onerror = () => rej(r.error);
-  });
-  return dbp;
-}
-async function idb<T>(mode: IDBTransactionMode, run: (s: IDBObjectStore) => IDBRequest<T>): Promise<T> {
-  const d = await db();
-  return new Promise((res, rej) => {
-    const r = run(d.transaction('f', mode).objectStore('f'));
-    r.onsuccess = () => res(r.result);
-    r.onerror = () => rej(r.error);
-  });
-}
-const putFile = (id: string, b: Blob) => idb('readwrite', (s) => s.put(b, id)).catch(() => undefined);
 const dropFile = (id: string) => {
   const u = urls.get(id);
   if (u) URL.revokeObjectURL(u);
@@ -145,7 +74,7 @@ const history: Record<string, Line[]> = load('chax.history') ?? {};
 for (const list of Object.values(history)) {
   for (const l of list) if ((l.status as string) === 'sent') l.status = 'transit'; // older builds
 }
-const unread: Record<string, number> = {};
+const unread: Record<string, number> = load('chax.unread') ?? {}; // the headless node counts messages while the app is closed
 const incoming = new Map<string, Incoming>(); // object id -> transfer in progress
 const STALL_MS = 15_000;
 const names = new Map<string, string>(Object.entries(load<Record<string, string>>('chax.names') ?? {}));
@@ -229,17 +158,28 @@ function flash(msg: string): void {
 function push(conv: string, line: Line): void {
   const list = (history[conv] ??= []);
   list.push(line);
-  if (list.length > 200) {
+  if (list.length > MAX_LINES) {
     const old = list.shift()!;
     if (old.file && old.id) void dropFile(old.id);
   }
   persist();
   const seen = conv === current && viewing();
   if (conv === current) renderChat(line.mine);
-  if (!line.mine && !seen) unread[conv] = (unread[conv] ?? 0) + 1;
+  if (!line.mine && !seen) {
+    unread[conv] = (unread[conv] ?? 0) + 1;
+    if (document.hidden && conv !== PUBLIC) notifyNative(conv, line);
+  }
   renderList();
   updateTitle();
   if (seen) sendReceipts();
+}
+
+/** The page is open but out of sight (screen off, other app): ask the OS to tell the user. */
+function notifyNative(conv: string, line: Line): void {
+  const p = cap?.Plugins?.ChaxBle;
+  if (!native || !p?.notify) return;
+  const body = line.file ? `Pièce jointe : ${line.file.name}` : line.text;
+  void p.notify({ key: conv, title: conv === ALERTS ? `Alerte · ${line.from}` : line.from, body, alert: !!line.alert }).catch(() => undefined);
 }
 
 /** The conversation is on screen and the app is in the foreground. */
@@ -676,6 +616,7 @@ function autosize(): void {
 }
 
 function updateTitle(): void {
+  save('chax.unread', unread);
   const total = Object.values(unread).reduce((a, b) => a + b, 0);
   document.title = total ? `(${total}) ChaX` : 'ChaX';
 }
@@ -896,6 +837,8 @@ function start(nickname: string): void {
     console.info('[chax] message', m.direct ? 'direct' : m.alert ? 'alert' : 'public', who);
     const line: Line = { id: m.id, mine: false, from: who, text: m.text, at: Date.now() };
     const key = m.alert ? ALERTS : m.direct ? m.from : PUBLIC;
+    // a fresh node (after the headless one, or a restart) meets packets neighbours still carry
+    if ((history[key] ?? []).some((l) => l.id === m.id)) return;
     if (m.attachment) {
       incoming.delete(m.id);
       const a = m.attachment;

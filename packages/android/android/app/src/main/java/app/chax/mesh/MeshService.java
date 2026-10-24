@@ -5,21 +5,53 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
 
 /**
- * Keeps the process (and so the WebView running the mesh) alive while the app is in the background.
- * It does no radio work itself: ChaxBlePlugin owns the Bluetooth link layer.
+ * Keeps the process alive so the mesh keeps running in the background. While the app is open the page owns the
+ * radio; once the Activity is gone (swiped away, killed to free memory) a HeadlessHost takes over with the same
+ * JavaScript node, so messages keep arriving and raise notifications.
  */
 public class MeshService extends Service {
     private static final String CHANNEL = "chax_mesh";
     private static final int NOTIFICATION_ID = 1;
 
+    private static MeshService instance;
+    private static boolean uiAlive;
+
+    private HeadlessHost headless;
+
+    /** The Activity is being created: the page takes the mesh over from the headless node. */
+    static void uiCreated() {
+        uiAlive = true;
+        if (instance != null) instance.stopHeadless();
+    }
+
+    /** The Activity is gone: if the mesh is on, the headless node carries on. */
+    static void uiDestroyed() {
+        uiAlive = false;
+        if (instance != null) instance.startHeadless();
+    }
+
+    private void startHeadless() {
+        if (headless != null || uiAlive) return;
+        headless = new HeadlessHost(this);
+        headless.start();
+    }
+
+    private void stopHeadless() {
+        if (headless == null) return;
+        headless.stop();
+        headless = null;
+    }
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        instance = this;
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationChannel ch = new NotificationChannel(CHANNEL, "Mesh ChaX", NotificationManager.IMPORTANCE_LOW);
@@ -42,7 +74,23 @@ public class MeshService extends Service {
         } else {
             startForeground(NOTIFICATION_ID, n);
         }
-        return START_NOT_STICKY;
+        if (intent == null) {
+            // the system restarted us after killing the process: the radio is off until we bring it back
+            String err = BleEngine.get(this).resume();
+            if (err != null) {
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+        }
+        startHeadless();
+        return START_STICKY;
+    }
+
+    @Override
+    public void onDestroy() {
+        stopHeadless();
+        if (instance == this) instance = null;
+        super.onDestroy();
     }
 
     @Override

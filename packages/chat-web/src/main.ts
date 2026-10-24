@@ -10,6 +10,7 @@ import {
   type ChatMessage,
   type Transport,
 } from '../../core/src';
+import { encodeCode, parseCode, qrElement, scanCamera, type Trusted } from './verify';
 import { ALERTS, MAX_LINES, IMAGE_MIMES, PUBLIC, cap, idb, load, loadIdentity, native, putFile, save, type Line, type Status } from './store';
 
 interface Incoming {
@@ -21,7 +22,7 @@ interface Incoming {
   dismissed?: boolean;
 }
 
-const GROUP_GAP_MS = 5 * 60 * 1000;
+const GROUP_GAP_MS = 2 * 60 * 1000; // a pause longer than this starts a new group, with its own time
 const WIDE = '(min-width: 761px)';
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -74,6 +75,7 @@ const history: Record<string, Line[]> = load('chax.history') ?? {};
 for (const list of Object.values(history)) {
   for (const l of list) if ((l.status as string) === 'sent') l.status = 'transit'; // older builds
 }
+const trust: Record<string, Trusted> = load('chax.trust') ?? {}; // peers whose code we scanned in person
 const unread: Record<string, number> = load('chax.unread') ?? {}; // the headless node counts messages while the app is closed
 const incoming = new Map<string, Incoming>(); // object id -> transfer in progress
 const STALL_MS = 15_000;
@@ -126,11 +128,14 @@ function dayLabel(t: number): string {
 const spaced = (hex: string) => hex.replace(/(.{4})/g, '$1 ').trim();
 const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const neighborIds = () => new Set(node.neighbors.values());
+const isVerified = (k: string) => !!trust[k];
+/** Someone not verified who goes by the name of a contact we did verify: the classic impersonation. */
+const lookalike = (k: string) => isPeerKey(k) && !trust[k] && Object.entries(trust).some(([id, t]) => id !== k && t.name === names.get(k));
 function labelOf(k: string): string {
   if (k === PUBLIC) return 'public';
   if (k === ALERTS) return 'alertes';
   const nm = names.get(k) ?? k.slice(0, 8);
-  const twin = [...names].some(([o, n]) => o !== k && n === nm);
+  const twin = lookalike(k) || [...names].some(([o, n]) => o !== k && n === nm);
   return twin ? `${nm} · ${k.slice(0, 4)}` : nm;
 }
 
@@ -248,6 +253,7 @@ interface Row {
   last?: Line;
   un: number;
   on?: boolean;
+  v?: number; // 1 verified, 2 lookalike of a verified contact
 }
 
 function lastOf(k: string): Line | undefined {
@@ -274,6 +280,7 @@ function buildRows(): Row[] {
     last: lastOf(k),
     un: unread[k] ?? 0,
     on: isPeerKey(k) ? online.has(k) : undefined,
+    v: isVerified(k) ? 1 : lookalike(k) ? 2 : 0,
   }));
   const order = (r: Row) => (r.k === PUBLIC ? 0 : r.k === ALERTS ? 1 : 2);
   rows.sort(
@@ -318,6 +325,11 @@ function rowEl(r: Row, i: number, selected: boolean): HTMLButtonElement {
   const g = span(`glyph${r.on ? ' on' : ''}`, glyph);
   g.setAttribute('aria-hidden', 'true');
   l1.append(g, span('nm', r.label));
+  if (isVerified(r.k)) {
+    l1.append(span('chk', '✓'), span('sr', ', vérifié'));
+  } else if (lookalike(r.k)) {
+    l1.append(span('warnmark', '⚠'), span('sr', ', porte le pseudo d’un contact vérifié'));
+  }
   if (isPeerKey(r.k)) l1.append(span('sr', r.on ? ', à portée' : ', hors de portée'));
   l1.append(span('fill', ''));
 
@@ -393,14 +405,24 @@ function header(): void {
   $('title').textContent = current === PUBLIC ? 'public' : current === ALERTS ? 'alertes' : labelOf(current);
   const sub = $('sub');
   sub.replaceChildren();
-  const left =
-    current === PUBLIC
+  const vbtn = $<HTMLButtonElement>('vbtn');
+  vbtn.classList.toggle('hide', !isPeerKey(current));
+  if (isPeerKey(current)) {
+    vbtn.textContent = isVerified(current) ? '✓ vérifié' : 'vérifier ›';
+    vbtn.classList.toggle('ok', isVerified(current));
+    vbtn.setAttribute('aria-label', isVerified(current) ? 'Contact vérifié en personne : gérer' : 'Vérifier ce contact en personne');
+  }
+  const fake = lookalike(current);
+  const left = fake
+    ? span('warn', '⚠ porte le pseudo d’un contact vérifié')
+    : current === PUBLIC
       ? span('', `${node.neighbors.size} à portée`)
       : current === ALERTS
         ? span('', 'signées · prioritaires')
         : span(online.has(current) ? 'ivory' : '', online.has(current) ? 'à portée' : 'hors de portée');
-  const right =
-    current === PUBLIC
+  const right = fake
+    ? ''
+    : current === PUBLIC
       ? 'visible par tout le mesh'
       : current === ALERTS
         ? 'portées 24 h par les relais'
@@ -414,7 +436,7 @@ function composer(): void {
   const alert = current === ALERTS;
   $('composer').classList.toggle('alert', alert);
   const input = $<HTMLTextAreaElement>('text');
-  input.placeholder = alert ? 'lieu, danger, besoin : bref et précis' : current === PUBLIC ? 'écrire au mesh' : `écrire à ${labelOf(current)}`;
+  input.placeholder = alert ? 'lieu, danger, besoin : bref et précis' : !wide() ? 'écrire…' : current === PUBLIC ? 'écrire au mesh' : `écrire à ${labelOf(current)}`;
   $('sendLbl').textContent = alert ? "diffuser l'alerte" : 'envoyer';
   $('attach').classList.toggle('hide', alert);
   const hint = $('hint');
@@ -450,7 +472,7 @@ function renderChat(forceBottom = false): void {
     log.append(e);
   }
 
-  const lastRead = [...list].reverse().find((l) => statusOf(l) === 'read');
+  const lastMine = [...list].reverse().find((l) => l.mine && !l.alert);
   let prev: Line | undefined;
   list.forEach((l, i) => {
     const fromEnd = list.length - 1 - i;
@@ -460,12 +482,12 @@ function renderChat(forceBottom = false): void {
     const tier = fromEnd === 0 ? 0 : fromEnd <= 2 ? 1 : 2;
     const m = el('div', `msg t${tier} ${l.mine ? 'mine' : 'theirs'}${l.alert ? ' alert' : ''}${cont ? ' cont' : ''}`);
     if (l.alert) m.append(span('who', `alerte · ${l.mine ? 'vous' : l.from} · ${clock(l.at)}`));
-    else if (!cont) m.append(span('who', `${l.mine ? 'vous' : l.from} · ${clock(l.at)}`));
+    else if (!cont) m.append(span('who', l.mine ? clock(l.at) : `${l.from} · ${clock(l.at)}`));
     if (l.file) m.append(fileEl(l));
     else m.append(span('txt', l.text));
     const st = statusOf(l);
-    const endsRun = !list[i + 1]?.mine;
-    if (st && (st === 'pending' || (endsRun && (st !== 'read' || l === lastRead)))) m.append(statusEl(st));
+    // one status for the thread, under the last message sent; a message still waiting for a neighbour always says so
+    if (st && (st === 'pending' || l === lastMine)) m.append(statusEl(st));
     log.append(m);
     prev = l;
   });
@@ -593,6 +615,164 @@ function lightbox(id: string, name: string, bytes: number): void {
     document.body.append(o);
     x.focus();
   });
+}
+
+/** Face-to-face verification: show our code, scan theirs, pin their key to their name. */
+function verifyDialog(focus?: string): void {
+  const back = document.activeElement as HTMLElement | null;
+  const o = el('div', 'lightbox verify');
+  o.setAttribute('role', 'dialog');
+  o.setAttribute('aria-modal', 'true');
+  o.setAttribute('aria-label', 'Vérification en personne');
+  const bar = el('div', 'bar');
+  const x = el('button', undefined, 'fermer ×');
+  x.type = 'button';
+  bar.append(span('', focus ? `vérifier ${labelOf(focus)}` : 'vérification en personne'), x);
+
+  const body = el('div', 'vbody');
+  const code = encodeCode(node.peerId, node.nickname);
+  const intro = el(
+    'p',
+    'vintro',
+    focus
+      ? `Face à ${labelOf(focus)}, scannez son code. Faites-lui scanner le vôtre pour qu’il vous vérifie à son tour.`
+      : 'Face à face, scannez le code de l’autre pour le marquer vérifié, et faites-lui scanner le vôtre.',
+  );
+  const qr = el('div', 'qr');
+  qr.append(qrElement(code));
+  const res = el('p', 'vres');
+  res.setAttribute('role', 'status');
+  const video = el('video');
+  video.muted = true;
+  video.classList.add('hide');
+  let stopCam: (() => void) | undefined;
+  const say = (t: string, bad = false) => {
+    res.textContent = t;
+    res.classList.toggle('bad', bad);
+  };
+
+  const handle = (raw: string): boolean => {
+    const c = parseCode(raw);
+    if (!c) {
+      say('Ce n’est pas un code ChaX.', true);
+      return false;
+    }
+    if (c.peerId === node.peerId) {
+      say('C’est votre propre code.', true);
+      return false;
+    }
+    if (focus && c.peerId !== focus) {
+      say(
+        c.name === names.get(focus)
+          ? `Ce code est celui d’un autre appareil nommé ${c.name} (${c.peerId.slice(0, 4)}), pas de ${labelOf(focus)}. L’un des deux se fait passer pour l’autre.`
+          : `Ce code n’est pas celui de ${labelOf(focus)} : c’est celui de ${c.name} (${c.peerId.slice(0, 4)}).`,
+        true,
+      );
+      return false;
+    }
+    trust[c.peerId] = { name: c.name, at: Date.now() };
+    save('chax.trust', trust);
+    if (!names.has(c.peerId)) {
+      names.set(c.peerId, c.name);
+      save('chax.names', Object.fromEntries(names));
+    }
+    listSig = '';
+    renderList();
+    header();
+    stopCam?.();
+    stopCam = undefined;
+    // the dialog has done its job: close it and leave the confirmation behind on the page
+    if (window.history.state?.lb) window.history.back();
+    else shut();
+    fail(`✓ ${c.name} est vérifié.`);
+    return true;
+  };
+
+  const act = el('div', 'vact');
+  const scan = el('button', undefined, 'scanner son code ›');
+  scan.type = 'button';
+  scan.onclick = async () => {
+    if (stopCam) return;
+    try {
+      video.classList.remove('hide');
+      say('Visez le code de l’autre téléphone.');
+      stopCam = await scanCamera(video, (t) => void handle(t));
+    } catch {
+      video.classList.add('hide');
+      say('Caméra inaccessible : autorisez-la, ou collez le code ci-dessous.', true);
+    }
+  };
+  const copy = el('button', undefined, 'copier mon code ›');
+  copy.type = 'button';
+  copy.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      say('Code copié : envoyez-le par un canal que vous maîtrisez.');
+    } catch {
+      say(code);
+    }
+  };
+  act.append(scan, copy);
+  if (focus && isVerified(focus)) {
+    const drop = el('button', undefined, 'retirer la vérification ›');
+    drop.type = 'button';
+    drop.onclick = () => {
+      delete trust[focus];
+      save('chax.trust', trust);
+      listSig = '';
+      renderList();
+      header();
+      say('Vérification retirée.');
+      drop.remove();
+    };
+    act.append(drop);
+  }
+
+  const paste = el('form', 'vpaste');
+  const field = el('input');
+  field.placeholder = 'ou coller un code';
+  field.autocomplete = 'off';
+  field.spellcheck = false;
+  field.setAttribute('aria-label', 'Coller un code de vérification');
+  const ok = el('button', undefined, 'valider ›');
+  ok.type = 'submit';
+  paste.onsubmit = (ev) => {
+    ev.preventDefault();
+    if (!field.value.trim()) {
+      say('Le champ est vide : collez un code, ou touchez « scanner son code ».', true);
+      return;
+    }
+    if (handle(field.value)) field.value = '';
+  };
+  paste.append(field, ok);
+
+  body.append(intro, qr, span('vfp', spaced(node.peerId)), act, video, paste, res);
+  o.append(bar, body);
+
+  const shut = () => {
+    if (closeLightbox !== shut) return;
+    closeLightbox = undefined;
+    stopCam?.();
+    o.remove();
+    document.removeEventListener('keydown', onKey, true);
+    back?.focus?.();
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      window.history.state?.lb ? window.history.back() : shut();
+    }
+  };
+  closeLightbox = shut;
+  try {
+    window.history.pushState({ ...(window.history.state ?? {}), lb: true }, '');
+  } catch {
+    /* ignore */
+  }
+  document.addEventListener('keydown', onKey, true);
+  x.onclick = () => (window.history.state?.lb ? window.history.back() : shut());
+  document.body.append(o);
+  x.focus();
 }
 
 $('msgs').addEventListener('scroll', () => {
@@ -762,14 +942,8 @@ document.addEventListener('keydown', (ev) => {
   }
 });
 
-$('fp').onclick = async () => {
-  try {
-    await navigator.clipboard.writeText(node.peerId);
-    flash('empreinte copiée');
-  } catch {
-    flash(spaced(node.peerId));
-  }
-};
+$('fp').onclick = () => verifyDialog();
+$('vbtn').onclick = () => verifyDialog(current);
 document.addEventListener('visibilitychange', () => {
   if (viewing()) {
     unread[current] = 0;

@@ -109,6 +109,7 @@ Le `ttl` est exclu de la signature pour pouvoir être décrémenté par les rela
 3. **Phase 2 :** simulateur visuel web du mesh (déplacements, portée, pertes) pour valider les algorithmes.
 4. **Phase 3 :** interface de chat web/desktop sur la même bibliothèque.
 5. **Phase 4 :** transport BLE réel (Web Bluetooth ou application Android native).
+6. **Suite :** vérification en personne : QR de l'empreinte à scanner face à face, badge « vérifié » dans la liste, avertissement si une empreinte inconnue reprend le pseudo d'un contact vérifié ; code court ajouté au pseudo pour distinguer les homonymes.
 
 ## 12. Questions ouvertes
 

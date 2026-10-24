@@ -1,5 +1,6 @@
 import { concat, equal, fromHex, randomBytes, toHex } from './bytes';
-import { createIdentity, open, peerIdOf, seal, sign, verify, type Identity } from './crypto';
+import { createIdentity, open, peerIdOf, sign, verify, type Identity } from './crypto';
+import * as ratchet from './ratchet';
 import {
   BROADCAST,
   Flags,
@@ -26,6 +27,7 @@ export const MAX_ATTACHMENT = 2 * 1024 * 1024;
 const FRAG_HEADER = ID_LEN + 2 + 2; // objId, index, total
 const MAX_FRAGS = Math.ceil((MAX_ATTACHMENT + 2048) / FRAG_SIZE) + 1;
 const MAX_ASSEMBLIES = 16;
+const MAX_SESSIONS_PER_PEER = 4;
 const FILE_EXPIRY_S = 6 * 3600;
 const ASSEMBLY_TTL_MS = 6 * 3600 * 1000;
 
@@ -99,6 +101,8 @@ export class ChaxNode {
   private readonly assemblies = new Map<string, Assembly>(); // object id hex -> fragments received so far
   private readonly finished = new Set<string>(); // object ids already delivered
   private transferHandlers: ((t: TransferProgress) => void)[] = [];
+  private readonly sessions = new Map<string, ratchet.Session[]>(); // peerId hex -> double-ratchet sessions, newest last
+  private sessionHandlers: (() => void)[] = [];
 
   constructor(opts: NodeOptions) {
     this.transport = opts.transport;
@@ -128,6 +132,65 @@ export class ChaxNode {
   /** Called with the hex msgId of a direct message once its recipient has read it. */
   onRead(cb: (msgId: string) => void): void {
     this.readHandlers.push(cb);
+  }
+
+  /** Called after any change of the encryption sessions: persist `exportSessions()`. */
+  onSessionsChanged(cb: () => void): void {
+    this.sessionHandlers.push(cb);
+  }
+
+  exportSessions(): Record<string, ratchet.SessionJson[]> {
+    return Object.fromEntries([...this.sessions].map(([k, list]) => [k, list.map(ratchet.sessionToJson)]));
+  }
+
+  loadSessions(data: Record<string, ratchet.SessionJson[]>): void {
+    for (const [k, list] of Object.entries(data)) {
+      try {
+        this.sessions.set(k, list.map(ratchet.sessionFromJson));
+      } catch {
+        /* a damaged entry only costs a new handshake */
+      }
+    }
+  }
+
+  /** Encrypts for a peer with the newest session that can send, opening a new one when there is none. */
+  private encryptFor(peerHex: string, plain: Uint8Array): Uint8Array {
+    const peer = this.peers.get(peerHex);
+    if (!peer) throw new Error('unknown peer: no public key');
+    const list = this.sessions.get(peerHex) ?? [];
+    let s = [...list].reverse().find(ratchet.canSend);
+    if (!s) {
+      s = ratchet.initiate(this.identity.xPriv, peer.xPub, this.clock.now());
+      list.push(s);
+      while (list.length > MAX_SESSIONS_PER_PEER) list.shift();
+      this.sessions.set(peerHex, list);
+    }
+    const out = ratchet.encrypt(s, plain, concat(this.identity.peerId, peer.peerId), this.clock.now());
+    this.sessionHandlers.forEach((h) => h());
+    return out;
+  }
+
+  private decryptFrom(srcHex: string, payload: Uint8Array): Uint8Array | null {
+    const peer = this.peers.get(srcHex);
+    if (!peer) return null;
+    const ad = concat(peer.peerId, this.identity.peerId);
+    const list = this.sessions.get(srcHex) ?? [];
+    const now = this.clock.now();
+    for (const s of [...list].reverse()) {
+      const plain = ratchet.decrypt(s, payload, ad, now);
+      if (plain) {
+        this.sessionHandlers.forEach((h) => h());
+        return plain;
+      }
+    }
+    const fresh = ratchet.accept({ priv: this.identity.xPriv, pub: this.identity.xPub }, peer.xPub, now);
+    const plain = ratchet.decrypt(fresh, payload, ad, now);
+    if (!plain) return null;
+    list.push(fresh);
+    while (list.length > MAX_SESSIONS_PER_PEER) list.shift();
+    this.sessions.set(srcHex, list);
+    this.sessionHandlers.forEach((h) => h());
+    return plain;
   }
 
   /** Called as fragments of an incoming attachment arrive. */
@@ -164,8 +227,8 @@ export class ChaxNode {
     const id = this.emit(
       PacketType.MSG,
       peer.peerId,
-      seal(peer.xPub, utf8(text)),
-      Flags.SIGNED | Flags.ENCRYPTED | Flags.STORE_FORWARD,
+      this.encryptFor(to, utf8(text)),
+      Flags.SIGNED | Flags.ENCRYPTED | Flags.RATCHET | Flags.STORE_FORWARD,
       expirySeconds,
     );
     this.awaitingAck.set(toHex(id), to);
@@ -182,9 +245,9 @@ export class ChaxNode {
     if (to !== undefined) {
       const peer = this.peers.get(to);
       if (!peer) throw new Error('unknown peer: no public key');
-      blob = seal(peer.xPub, blob);
+      blob = this.encryptFor(to, blob);
       dst = peer.peerId;
-      flags |= Flags.ENCRYPTED;
+      flags |= Flags.ENCRYPTED | Flags.RATCHET;
     }
     const objId = randomBytes(ID_LEN);
     if (to !== undefined) {
@@ -361,7 +424,8 @@ export class ChaxNode {
         if (isBroadcast(p.dst)) {
           this.deliver(p, p.payload, false);
         } else if (equal(p.dst, this.identity.peerId)) {
-          const plain = p.flags & Flags.ENCRYPTED ? open(this.identity, p.payload) : p.payload;
+          const plain =
+            p.flags & Flags.RATCHET ? this.decryptFrom(srcHex, p.payload) : p.flags & Flags.ENCRYPTED ? open(this.identity, p.payload) : p.payload;
           if (plain) {
             this.deliver(p, plain, true);
             this.sendAck(p);
@@ -422,7 +486,7 @@ export class ChaxNode {
 
     this.assemblies.delete(hex);
     const blob = concat(...Array.from({ length: total }, (_, i) => a.parts.get(i)!));
-    const plain = a.direct ? open(this.identity, blob) : blob;
+    const plain = a.direct ? this.decryptFrom(a.from, blob) ?? open(this.identity, blob) : blob;
     const file = plain && decodeBlob(plain);
     if (!file) return;
     this.finished.add(hex);

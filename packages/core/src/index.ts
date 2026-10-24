@@ -1,5 +1,6 @@
 export * from './bytes';
 export * from './crypto';
+export * from './ratchet';
 export * from './packet';
 export * from './store';
 export * from './transport';

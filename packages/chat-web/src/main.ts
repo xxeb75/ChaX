@@ -876,6 +876,12 @@ function start(nickname: string): void {
   if (native && cap?.Plugins?.ChaxBle) ble = new BleTransport(capacitorBridge(cap.Plugins.ChaxBle));
   const transport: Transport = ble ?? relay ?? new BroadcastChannelTransport();
   node = new ChaxNode({ transport, identity: loadIdentity(), nickname });
+  node.loadSessions(load('chax.sessions') ?? {});
+  let sessionSave: number | undefined;
+  node.onSessionsChanged(() => {
+    clearTimeout(sessionSave);
+    sessionSave = window.setTimeout(() => save('chax.sessions', node.exportSessions()), 150);
+  });
   transport.onReceive(() => ping());
   transport.onLinkUp((l) => console.info('[chax] link up', l));
   transport.onLinkDown((l) => console.info('[chax] link down', l));

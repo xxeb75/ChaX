@@ -55,7 +55,7 @@ Le `ttl` est exclu de la signature pour pouvoir être décrémenté par les rela
 
 ## 5. Chiffrement
 
-- **DM :** Noise (XX ou IK) pour l'établissement, puis double ratchet pour la confidentialité persistante. Sans session disponible hors ligne : message scellé (type « sealed box ») vers la clé publique du destinataire.
+- **DM (implémenté) :** double ratchet entre les identités X25519 longue durée (drapeau `RATCHET`), construit sur des primitives auditées (X25519, HKDF-SHA256, HMAC, ChaCha20-Poly1305). Pas de serveur de prékeys : la racine initiale mélange les deux clés statiques, la première étape DH ajoute l'éphémère de l'initiateur. Chaque réponse apporte une nouvelle clé de ratchet : à partir du deuxième aller-retour, les messages passés restent illisibles même si les clés longue durée sont volées (confidentialité persistante) et une session volée se referme au tour suivant. Le tout premier message n'est protégé que par les clés longue durée. Messages perdus ou déséquilibrés : clés sautées conservées (200 max). Initiations croisées : jusqu'à 4 sessions par pair, essayées de la plus récente à la plus ancienne. Les sessions se sérialisent (`exportSessions`) pour survivre à un redémarrage. Les anciens messages scellés (« sealed box ») restent lisibles.
 - **Salons publics :** signés, non chiffrés.
 - **Salons privés / groupes :** clé de groupe distribuée par DM, rotation à chaque départ de membre (version 1 : clé partagée ; version 2 : MLS).
 - **Métadonnées :** `dst` peut être remplacé par un tag de routage dérivé (HMAC de la clé partagée + époque) afin que les relais ne sachent pas qui parle à qui. Rembourrage des tailles de paquets.

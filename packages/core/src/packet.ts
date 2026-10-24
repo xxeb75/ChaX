@@ -21,6 +21,7 @@ export const Flags = {
   SIGNED: 2,
   PRIORITY: 4,
   STORE_FORWARD: 8,
+  RATCHET: 16, // ENCRYPTED payload is a double-ratchet message, not a sealed box
 } as const;
 
 export interface Packet {

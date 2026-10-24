@@ -8,8 +8,14 @@ import {
   SimNetwork,
   Store,
   VERSION,
+  accept,
   createIdentity,
   decode,
+  decrypt as ratchetDecrypt,
+  encrypt as ratchetEncrypt,
+  initiate,
+  sessionFromJson,
+  sessionToJson,
   encode,
   open,
   seal,
@@ -420,6 +426,109 @@ describe('store-and-forward', () => {
       expect(seen.length).toBeGreaterThan(1);
       expect(seen[seen.length - 1]).toBe(1);
       expect(() => a.sendFile(photo(3 * 1024 * 1024))).toThrow();
+    });
+  });
+
+  describe('double ratchet', () => {
+    const enc = (t: string) => new TextEncoder().encode(t);
+    const dec = (b: Uint8Array | null) => (b ? new TextDecoder().decode(b) : null);
+    const ad = new Uint8Array([1, 2, 3]);
+    const pair = () => {
+      const a = createIdentity();
+      const b = createIdentity();
+      return { a, b, sa: initiate(a.xPriv, b.xPub, 1), sb: accept({ priv: b.xPriv, pub: b.xPub }, a.xPub, 1) };
+    };
+
+    it('talks both ways, with replies changing keys every round trip', () => {
+      const { sa, sb } = pair();
+      expect(dec(ratchetDecrypt(sb, ratchetEncrypt(sa, enc('un'), ad, 1), ad, 1))).toBe('un');
+      const k0 = toHex(sa.dhs.pub);
+      expect(dec(ratchetDecrypt(sa, ratchetEncrypt(sb, enc('deux'), ad, 1), ad, 1))).toBe('deux');
+      expect(toHex(sa.dhs.pub)).not.toBe(k0); // A's ratchet key moved when B's reply arrived
+      expect(dec(ratchetDecrypt(sb, ratchetEncrypt(sa, enc('trois'), ad, 1), ad, 1))).toBe('trois');
+    });
+
+    it('survives lost and reordered messages', () => {
+      const { sa, sb } = pair();
+      const m = ['a', 'b', 'c', 'd'].map((t) => ratchetEncrypt(sa, enc(t), ad, 1));
+      expect(dec(ratchetDecrypt(sb, m[3]!, ad, 1))).toBe('d'); // arrives first, 'b' and 'c' skipped
+      expect(dec(ratchetDecrypt(sb, m[1]!, ad, 1))).toBe('b');
+      expect(dec(ratchetDecrypt(sb, m[0]!, ad, 1))).toBe('a');
+      expect(dec(ratchetDecrypt(sb, m[1]!, ad, 1))).toBeNull(); // a replay is not accepted twice
+    });
+
+    it('rejects tampering and a wrong context without breaking the session', () => {
+      const { sa, sb } = pair();
+      const m = ratchetEncrypt(sa, enc('secret'), ad, 1);
+      const bad = m.slice();
+      bad[bad.length - 1]! ^= 1;
+      expect(ratchetDecrypt(sb, bad, ad, 1)).toBeNull();
+      expect(ratchetDecrypt(sb, m, new Uint8Array([9]), 1)).toBeNull();
+      expect(dec(ratchetDecrypt(sb, m, ad, 1))).toBe('secret');
+    });
+
+    it('forward secrecy: a stolen session state cannot read what was said before the last round trip', () => {
+      const { sa, sb } = pair();
+      const old = ratchetEncrypt(sa, enc('avant'), ad, 1);
+      ratchetDecrypt(sb, old, ad, 1);
+      ratchetDecrypt(sa, ratchetEncrypt(sb, enc('reponse'), ad, 1), ad, 1);
+      ratchetDecrypt(sb, ratchetEncrypt(sa, enc('encore'), ad, 1), ad, 1);
+      // the thief gets B's whole state now, and had recorded the old ciphertext
+      const stolen = sessionFromJson(sessionToJson(sb));
+      expect(ratchetDecrypt(stolen, old, ad, 1)).toBeNull();
+    });
+
+    it('round-trips through its JSON form', () => {
+      const { sa, sb } = pair();
+      ratchetDecrypt(sb, ratchetEncrypt(sa, enc('x'), ad, 1), ad, 1);
+      const sb2 = sessionFromJson(JSON.parse(JSON.stringify(sessionToJson(sb))));
+      expect(dec(ratchetDecrypt(sa, ratchetEncrypt(sb2, enc('retour'), ad, 1), ad, 1))).toBe('retour');
+    });
+
+    it('end to end: both sides start talking at once, then keep going, across a restart', () => {
+      const r = rig(2);
+      r.net.link('n0', 'n1');
+      r.net.run(1000);
+      const [a, b] = r.nodes as [ChaxNode, ChaxNode];
+      a.sendDirect(b.peerId, 'de A');
+      b.sendDirect(a.peerId, 'de B'); // crossed first messages
+      r.net.run(1000);
+      expect(r.inbox[1]!.map((m) => m.text)).toEqual(['de A']);
+      expect(r.inbox[0]!.map((m) => m.text)).toEqual(['de B']);
+      a.sendDirect(b.peerId, 'suite A');
+      b.sendDirect(a.peerId, 'suite B');
+      r.net.run(1000);
+      expect(r.inbox[1]!.map((m) => m.text)).toEqual(['de A', 'suite A']);
+      expect(r.inbox[0]!.map((m) => m.text)).toEqual(['de B', 'suite B']);
+
+      // B restarts with its saved sessions
+      const saved = JSON.parse(JSON.stringify(b.exportSessions()));
+      const t = r.net.createTransport('n1b');
+      const b2 = new ChaxNode({ transport: t, identity: b.identity, nickname: 'node1', clock: r.net, rng: r.net.rng });
+      b2.loadSessions(saved);
+      const box: ChatMessage[] = [];
+      b2.onMessage((m) => box.push(m));
+      r.net.unlink('n0', 'n1');
+      r.net.link('n0', 'n1b');
+      r.net.run(1500);
+      a.sendDirect(b2.peerId, 'apres redemarrage');
+      r.net.run(1000);
+      expect(box.map((m) => m.text)).toEqual(['apres redemarrage']);
+    });
+
+    it('relays only ever see ciphertext that differs for every message', () => {
+      const r = rig(3);
+      chain(r);
+      r.net.run(1000);
+      const [a, b, c] = r.nodes as [ChaxNode, ChaxNode, ChaxNode];
+      r.net.unlink('n1', 'n2');
+      a.sendDirect(c.peerId, 'meme texte');
+      a.sendDirect(c.peerId, 'meme texte');
+      r.net.run(500);
+      const carried = b.store.all(r.net.now()).filter((p) => p.type === PacketType.MSG);
+      expect(carried).toHaveLength(2);
+      expect(toHex(carried[0]!.payload)).not.toBe(toHex(carried[1]!.payload));
+      expect(carried[0]!.flags & Flags.RATCHET).toBeTruthy();
     });
   });
 });

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="dark" />
   <meta name="theme-color" content="#0a0a0c" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 fill=%27%230a0a0c%27/%3E%3Cpath fill=%27%23f1efe9%27 d=%27M2 1.5 6 5h4l4-3.5V9c0 3.5-2.7 5.5-6 5.5S2 12.5 2 9z%27/%3E%3Cpath fill=%27%230a0a0c%27 d=%27M5 8h2v2H5zM9 8h2v2H9z%27/%3E%3C/svg%3E" />
   <title>ChaX</title>
   <link rel="preload" href="/fonts/JetBrainsMono-400.woff2" as="font" type="font/woff2" crossorigin />
   <style>
@@ -78,6 +79,7 @@
     #side { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--dust-1); padding-top: var(--top); }
     .top { padding: 4px 20px 0; }
     .id { display: flex; align-items: baseline; gap: 12px; min-height: 44px; }
+    .id .cat { flex: none; align-self: center; color: var(--ivory); }
     .id .wm { font-size: var(--fs-mid); letter-spacing: .02em; }
     .id .fp { font-size: var(--fs-dust); color: var(--dust-3); min-height: 44px; display: inline-flex; align-items: baseline; gap: 8px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .id .fp:hover { color: var(--ivory); }
@@ -152,19 +154,25 @@
     #msgs .log { margin-top: auto; display: flex; flex-direction: column; }
     .day { display: flex; gap: 12px; align-items: center; margin: 18px 0 10px; font-size: var(--fs-dust); color: var(--dust-3); text-transform: uppercase; letter-spacing: .12em; }
     .day::before, .day::after { content: ''; flex: 1; border-top: 1px dotted var(--dust-2); }
-    .msg { max-width: min(62ch, 86%); display: flex; flex-direction: column; margin-top: 22px; font-size: var(--fs-mid); overflow-wrap: break-word; }
-    .msg.cont { margin-top: 0; padding-top: 4px; }
+    .msg { max-width: min(56ch, 82%); display: flex; flex-direction: column; margin-top: 20px; font-size: var(--fs-mid); overflow-wrap: break-word; }
+    .msg.cont { margin-top: 4px; }
     .msg .who { font-size: var(--fs-dust); color: var(--dust-3); margin-bottom: 4px; }
-    .msg .txt { white-space: pre-wrap; text-wrap: pretty; line-height: 1.5; }
-    .msg.theirs { align-self: flex-start; color: var(--ivory); }
-    .msg.mine { align-self: flex-end; width: min(62ch, 86%); color: var(--ivory-2); padding-right: 10px; border-right: 1px solid var(--dust-2); }
+    .msg .txt, .msg .file { padding: 8px 12px; }
+    .msg .txt { display: block; white-space: pre-wrap; text-wrap: pretty; line-height: 1.5; }
+    .msg.theirs { align-self: flex-start; align-items: flex-start; }
+    .msg.theirs .txt, .msg.theirs .file { background: var(--dust-1); color: var(--ivory); }
+    .msg.mine { align-self: flex-end; align-items: flex-end; }
+    .msg.mine .txt, .msg.mine .file { background: var(--amber); color: var(--void); }
+    .msg.mine .file .act { color: rgba(10, 10, 12, .72); }
+    .msg.mine .file:hover .act { color: var(--void); text-decoration: underline; }
     .msg .st { font-size: var(--fs-dust); color: var(--dust-3); margin-top: 2px; display: flex; gap: 8px; }
     .msg .st .g { letter-spacing: -.1em; }
     .msg .st.read, .msg .st.read .g { color: var(--ivory); }
     .msg .st.wait { color: var(--ivory); }
     .msg.t0 { animation: arrive .38s var(--ease) both; }
     @keyframes arrive { from { opacity: 0; transform: translateY(8px); } }
-    .msg.alert { align-self: stretch; max-width: none; background: var(--ivory); color: var(--void); padding: 10px 14px; margin-top: 22px; width: auto; border-right: 0; text-align: left; align-items: stretch; filter: none; opacity: 1; }
+    .msg.alert { align-self: stretch; max-width: none; background: var(--ivory); color: var(--void); padding: 10px 14px; margin-top: 20px; width: auto; text-align: left; align-items: stretch; filter: none; opacity: 1; }
+    .msg.alert .txt, .msg.alert .file { background: none; color: inherit; padding: 0; }
     .msg.alert .who, .msg.alert .st, .msg.alert .st .g { color: var(--void); }
     .msg.alert .who { text-transform: uppercase; letter-spacing: .12em; }
     .empty { color: var(--dust-3); font-size: var(--fs-rear); display: grid; gap: 4px; max-width: 44ch; margin-bottom: 8px; }
@@ -178,13 +186,13 @@
     .composer .qline { align-items: flex-end; font-size: var(--fs-mid); min-height: 48px; }
     .composer .car { min-height: 48px; display: grid; place-items: center; font-size: var(--fs-front); }
     #text { flex: 1; min-width: 0; resize: none; min-height: 48px; max-height: 144px; font-size: var(--fs-mid); line-height: 1.45; padding: 12px 0; overflow-y: auto; scrollbar-width: none; }
-    .sendBtn { min-height: 48px; padding: 0 4px; color: var(--dust-3); font-size: var(--fs-mid); transition: color .15s; white-space: nowrap; }
-    .sendBtn:not(:disabled) { color: var(--ivory); }
-    .sendBtn:not(:disabled):hover { color: var(--amber); }
+    .sendBtn { min-height: 48px; min-width: 48px; display: grid; place-items: center; padding: 0; color: var(--dust-2); font-size: var(--fs-mid); transition: color .15s; white-space: nowrap; }
+    .sendBtn:not(:disabled) { color: var(--amber); }
+    .sendBtn:not(:disabled):hover { color: var(--ivory); }
     .sendBtn:disabled { cursor: default; }
-    .composer.alert .sendBtn:not(:disabled) { background: var(--ivory); color: var(--void); padding: 0 14px; }
-    .attach { min-height: 48px; min-width: 48px; padding: 0 10px; margin-right: 6px; color: var(--dust-3); font-size: var(--fs-mid); text-align: center; transition: color .15s; white-space: nowrap; }
-    .attach:hover { color: var(--amber); }
+    .composer.alert .sendBtn:not(:disabled) { background: var(--ivory); color: var(--void); }
+    .attach { min-height: 48px; min-width: 48px; display: grid; place-items: center; padding: 0; margin-right: 2px; color: var(--amber); font-size: var(--fs-mid); text-align: center; transition: color .15s; white-space: nowrap; }
+    .attach:hover { color: var(--ivory); }
     .msg .img { display: block; padding: 0; margin-top: 4px; max-width: 100%; }
     .msg .img img { display: block; max-width: 100%; max-height: 300px; min-height: 48px; background: var(--void-2); }
     .msg.t1 .img img { max-height: 190px; }
@@ -213,7 +221,7 @@
     .lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
     .composer .hint { margin: 0; font-size: var(--fs-dust); color: var(--dust-3); min-height: 18px; }
     @media (hover: none) { .composer .hint .kb { display: none; } }
-    @media (max-width: 760px) { .composer .hint { display: none; } .composer.alert .hint { display: block; } .attach { padding: 0 4px; margin-right: 0; } }
+    @media (max-width: 760px) { .composer .hint { display: none; } .composer.alert .hint { display: block; } }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 
     /* ---- phone: one pane at a time ---- */
@@ -248,6 +256,7 @@
     <aside id="side" aria-label="Conversations">
       <div class="top">
         <div class="id">
+          <svg class="cat" viewBox="0 0 16 16" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M2 1.5 6 5h4l4-3.5V9c0 3.5-2.7 5.5-6 5.5S2 12.5 2 9z"/><path fill="#0a0a0c" d="M5 8h2v2H5zM9 8h2v2H9z"/></svg>
           <span class="wm" id="meName"></span>
           <button class="fp" id="fp" type="button" aria-label="Ouvrir mon code pour me faire vérifier en personne"><span id="meFp"></span><span class="act" aria-hidden="true">vérifier ›</span></button>
           <span id="flash" role="status" aria-live="polite"></span>
@@ -276,9 +285,9 @@
           <span class="car" aria-hidden="true">›</span>
           <label for="text" class="sr">Votre message</label>
           <textarea id="text" rows="1" enterkeyhint="send"></textarea>
-          <button class="attach" id="attach" type="button" aria-label="Joindre une photo ou un fichier">+ joindre</button>
+          <button class="attach" id="attach" type="button" aria-label="Joindre une photo ou un fichier" title="Joindre une photo ou un fichier"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true" focusable="false"><path d="M20 11.5 12 19.5a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7L9.8 17.2a1.7 1.7 0 0 1-2.4-2.4L15 7.2"/></svg></button>
           <input id="pick" class="hide" type="file" multiple tabindex="-1" aria-hidden="true" />
-          <button class="sendBtn" id="sendBtn" type="submit" disabled><span id="sendLbl">envoyer</span> ›</button>
+          <button class="sendBtn" id="sendBtn" type="submit" aria-label="Envoyer" title="Envoyer" disabled><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true" focusable="false"><path d="M4 12h15M13 5.5l6.5 6.5-6.5 6.5"/></svg></button>
         </div>
         <p class="hint" id="hint"></p>
       </form>

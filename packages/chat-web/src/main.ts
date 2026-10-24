@@ -437,7 +437,9 @@ function composer(): void {
   $('composer').classList.toggle('alert', alert);
   const input = $<HTMLTextAreaElement>('text');
   input.placeholder = alert ? 'lieu, danger, besoin : bref et précis' : !wide() ? 'écrire…' : current === PUBLIC ? 'écrire au mesh' : `écrire à ${labelOf(current)}`;
-  $('sendLbl').textContent = alert ? "diffuser l'alerte" : 'envoyer';
+  const sendLabel = alert ? "Diffuser l'alerte" : 'Envoyer';
+  $('sendBtn').setAttribute('aria-label', sendLabel);
+  $('sendBtn').title = sendLabel;
   $('attach').classList.toggle('hide', alert);
   const hint = $('hint');
   hint.replaceChildren();

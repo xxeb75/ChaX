@@ -4,8 +4,30 @@
     {
       "name": "sim-web",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "packages/sim-web", "run", "dev", "--", "--port", "5173"],
+      "runtimeArgs": [
+        "--prefix",
+        "packages/sim-web",
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "5173"
+      ],
       "port": 5173
+    },
+    {
+      "name": "chat-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "packages/chat-web",
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "5174"
+      ],
+      "port": 5174
     }
   ]
 }

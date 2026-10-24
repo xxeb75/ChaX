@@ -68,3 +68,8 @@ export function open(id: Identity, sealed: Uint8Array): Uint8Array | null {
     return null;
   }
 }
+
+export function identityFromSecrets(edPriv: Uint8Array, xPriv: Uint8Array): Identity {
+  const edPub = ed25519.getPublicKey(edPriv);
+  return { edPriv, edPub, xPriv, xPub: x25519.getPublicKey(xPriv), peerId: peerIdOf(edPub) };
+}

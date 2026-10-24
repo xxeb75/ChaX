@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ChaX — Chat</title>
+  <style>
+    :root { --bg:#0e1118; --panel:#161b25; --panel2:#1d2431; --fg:#e6e9ef; --muted:#8b93a5; --line:#283044; --accent:#4ea1ff; --mine:#1f4f86; --alert:#ffb84e; --ok:#5fd38d; }
+    * { box-sizing:border-box; }
+    html, body { height:100%; }
+    body { margin:0; background:var(--bg); color:var(--fg); font:15px system-ui,sans-serif; display:flex; }
+    aside { width:260px; background:var(--panel); border-right:1px solid var(--line); display:flex; flex-direction:column; min-height:0; }
+    .me { padding:14px; border-bottom:1px solid var(--line); }
+    .me b { display:block; font-size:16px; }
+    .me small { color:var(--muted); font-size:12px; word-break:break-all; }
+    .stats { display:flex; gap:10px; margin-top:8px; font-size:12px; color:var(--muted); }
+    .stats span b { display:inline; color:var(--fg); font-size:12px; }
+    nav { flex:1; overflow:auto; padding:6px; }
+    nav h3 { margin:10px 8px 4px; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; font-weight:600; }
+    .conv { display:flex; align-items:center; gap:8px; width:100%; padding:8px 10px; border:0; border-radius:8px; background:none; color:var(--fg); font:inherit; text-align:left; cursor:pointer; }
+    .conv:hover { background:var(--panel2); }
+    .conv.active { background:var(--panel2); outline:1px solid var(--line); }
+    .dot { width:8px; height:8px; border-radius:50%; background:#3a4358; flex:none; }
+    .dot.on { background:var(--ok); }
+    .name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .badge { background:var(--accent); color:#06121f; border-radius:10px; font-size:11px; padding:1px 7px; font-weight:700; }
+    main { flex:1; display:flex; flex-direction:column; min-width:0; min-height:0; }
+    header { padding:14px 18px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:10px; }
+    header h2 { margin:0; font-size:16px; }
+    header small { color:var(--muted); }
+    #msgs { flex:1; overflow:auto; padding:16px 18px; display:flex; flex-direction:column; gap:8px; }
+    .m { max-width:min(560px,85%); padding:8px 12px; border-radius:12px; background:var(--panel2); align-self:flex-start; word-wrap:break-word; }
+    .m.mine { background:var(--mine); align-self:flex-end; }
+    .m.alert { border:1px solid var(--alert); background:#2b2212; }
+    .m .who { font-size:12px; color:var(--muted); margin-bottom:2px; }
+    .m .t { font-size:11px; color:var(--muted); margin-left:8px; }
+    .empty { margin:auto; color:var(--muted); text-align:center; max-width:360px; line-height:1.5; }
+    form { display:flex; gap:8px; padding:12px 18px; border-top:1px solid var(--line); }
+    input, button { font:inherit; color:var(--fg); background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:9px 12px; }
+    input { flex:1; min-width:0; }
+    button { cursor:pointer; }
+    button:hover { border-color:var(--accent); }
+    button.primary { background:var(--accent); color:#06121f; border-color:var(--accent); font-weight:600; }
+    button.warn { color:var(--alert); }
+    #setup { position:fixed; inset:0; background:rgba(0,0,0,.7); display:flex; align-items:center; justify-content:center; padding:16px; }
+    #setup form { flex-direction:column; border:1px solid var(--line); background:var(--panel); border-radius:14px; padding:22px; width:min(380px,100%); }
+    #setup h1 { margin:0 0 4px; font-size:20px; }
+    #setup p { margin:0 0 8px; color:var(--muted); font-size:13px; line-height:1.45; }
+    .hide { display:none !important; }
+    @media (max-width:700px) { aside { width:120px; } .me small, .stats { display:none; } }
+  </style>
+</head>
+<body>
+  <div id="setup" class="hide">
+    <form id="setupForm">
+      <h1>ChaX</h1>
+      <p>Messagerie en réseau maillé : pas de compte, pas de serveur. Choisissez un pseudo. Votre identité (clés) est créée et gardée dans ce navigateur.</p>
+      <input id="nick" maxlength="24" placeholder="Pseudo" autocomplete="off" />
+      <button class="primary" type="submit">Entrer dans le mesh</button>
+    </form>
+  </div>
+  <aside>
+    <div class="me">
+      <b id="meName">—</b>
+      <small id="meId"></small>
+      <div class="stats"><span>voisins <b id="nNeighbors">0</b></span><span>portés <b id="nCarried">0</b></span></div>
+    </div>
+    <nav id="convs"></nav>
+  </aside>
+  <main>
+    <header><h2 id="title">Public</h2><small id="sub"></small></header>
+    <div id="msgs"></div>
+    <form id="send">
+      <input id="text" autocomplete="off" placeholder="Écrire un message…" />
+      <button class="warn hide" id="alertBtn" type="button" title="Alerte prioritaire, portée par les relais">⚠</button>
+      <button class="primary" type="submit">Envoyer</button>
+    </form>
+  </main>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

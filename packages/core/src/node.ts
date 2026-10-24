@@ -60,6 +60,8 @@ export class ChaxNode {
   private readonly seen = new Map<string, number>(); // msgId -> highest ttl seen
   private readonly pendingRelay = new Map<string, () => void>();
   private handlers: ((m: ChatMessage) => void)[] = [];
+  private deliveredHandlers: ((msgId: string) => void)[] = [];
+  private awaitingAck = new Map<string, string>(); // msgId hex -> recipient peerId hex
 
   constructor(opts: NodeOptions) {
     this.transport = opts.transport;
@@ -79,6 +81,11 @@ export class ChaxNode {
 
   onMessage(cb: (m: ChatMessage) => void): void {
     this.handlers.push(cb);
+  }
+
+  /** Called with the hex msgId of a direct message once its recipient has acknowledged it. */
+  onDelivered(cb: (msgId: string) => void): void {
+    this.deliveredHandlers.push(cb);
   }
 
   // ---- sending -------------------------------------------------------
@@ -107,13 +114,15 @@ export class ChaxNode {
   sendDirect(to: string, text: string, expirySeconds = DEFAULT_EXPIRY_S): Uint8Array {
     const peer = this.peers.get(to);
     if (!peer) throw new Error('unknown peer: no public key');
-    return this.emit(
+    const id = this.emit(
       PacketType.MSG,
       peer.peerId,
       seal(peer.xPub, utf8(text)),
       Flags.SIGNED | Flags.ENCRYPTED | Flags.STORE_FORWARD,
       expirySeconds,
     );
+    this.awaitingAck.set(toHex(id), to);
+    return id;
   }
 
   private announcePayload(): Uint8Array {
@@ -226,6 +235,13 @@ export class ChaxNode {
         break;
       case PacketType.ACK:
         this.store.remove(p.payload.slice(0, ID_LEN));
+        {
+          const acked = toHex(p.payload.slice(0, ID_LEN));
+          if (this.awaitingAck.get(acked) === srcHex) {
+            this.awaitingAck.delete(acked);
+            this.deliveredHandlers.forEach((h) => h(acked));
+          }
+        }
         break;
       case PacketType.MSG:
       case PacketType.ALERT:

@@ -2,80 +2,229 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ChaX — Chat</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="light dark" />
+  <title>ChaX</title>
   <style>
-    :root { --bg:#0e1118; --panel:#161b25; --panel2:#1d2431; --fg:#e6e9ef; --muted:#8b93a5; --line:#283044; --accent:#4ea1ff; --mine:#1f4f86; --alert:#ffb84e; --ok:#5fd38d; }
-    * { box-sizing:border-box; }
-    html, body { height:100%; }
-    body { margin:0; background:var(--bg); color:var(--fg); font:15px system-ui,sans-serif; display:flex; }
-    aside { width:260px; background:var(--panel); border-right:1px solid var(--line); display:flex; flex-direction:column; min-height:0; }
-    .me { padding:14px; border-bottom:1px solid var(--line); }
-    .me b { display:block; font-size:16px; }
-    .me small { color:var(--muted); font-size:12px; word-break:break-all; }
-    .stats { display:flex; gap:10px; margin-top:8px; font-size:12px; color:var(--muted); }
-    .stats span b { display:inline; color:var(--fg); font-size:12px; }
-    nav { flex:1; overflow:auto; padding:6px; }
-    nav h3 { margin:10px 8px 4px; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; font-weight:600; }
-    .conv { display:flex; align-items:center; gap:8px; width:100%; padding:8px 10px; border:0; border-radius:8px; background:none; color:var(--fg); font:inherit; text-align:left; cursor:pointer; }
-    .conv:hover { background:var(--panel2); }
-    .conv.active { background:var(--panel2); outline:1px solid var(--line); }
-    .dot { width:8px; height:8px; border-radius:50%; background:#3a4358; flex:none; }
-    .dot.on { background:var(--ok); }
-    .name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .badge { background:var(--accent); color:#06121f; border-radius:10px; font-size:11px; padding:1px 7px; font-weight:700; }
-    main { flex:1; display:flex; flex-direction:column; min-width:0; min-height:0; }
-    header { padding:14px 18px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:10px; }
-    header h2 { margin:0; font-size:16px; }
-    header small { color:var(--muted); }
-    #msgs { flex:1; overflow:auto; padding:16px 18px; display:flex; flex-direction:column; gap:8px; }
-    .m { max-width:min(560px,85%); padding:8px 12px; border-radius:12px; background:var(--panel2); align-self:flex-start; word-wrap:break-word; }
-    .m.mine { background:var(--mine); align-self:flex-end; }
-    .m.alert { border:1px solid var(--alert); background:#2b2212; }
-    .m .who { font-size:12px; color:var(--muted); margin-bottom:2px; }
-    .m .t { font-size:11px; color:var(--muted); margin-left:8px; }
-    .empty { margin:auto; color:var(--muted); text-align:center; max-width:360px; line-height:1.5; }
-    form { display:flex; gap:8px; padding:12px 18px; border-top:1px solid var(--line); }
-    input, button { font:inherit; color:var(--fg); background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:9px 12px; }
-    input { flex:1; min-width:0; }
-    button { cursor:pointer; }
-    button:hover { border-color:var(--accent); }
-    button.primary { background:var(--accent); color:#06121f; border-color:var(--accent); font-weight:600; }
-    button.warn { color:var(--alert); }
-    #setup { position:fixed; inset:0; background:rgba(0,0,0,.7); display:flex; align-items:center; justify-content:center; padding:16px; }
-    #setup form { flex-direction:column; border:1px solid var(--line); background:var(--panel); border-radius:14px; padding:22px; width:min(380px,100%); }
-    #setup h1 { margin:0 0 4px; font-size:20px; }
-    #setup p { margin:0 0 8px; color:var(--muted); font-size:13px; line-height:1.45; }
-    .hide { display:none !important; }
-    @media (max-width:700px) { aside { width:120px; } .me small, .stats { display:none; } }
+    :root {
+      --bg: oklch(0.985 0.004 90);
+      --surface: oklch(1 0 0);
+      --side: oklch(0.963 0.007 215);
+      --hover: oklch(0.935 0.01 215);
+      --line: oklch(0.9 0.01 230);
+      --fg: oklch(0.22 0.02 250);
+      --muted: oklch(0.48 0.02 250);
+      --accent: oklch(0.5 0.115 205);
+      --accent-ink: oklch(0.99 0 0);
+      --accent-soft: oklch(0.93 0.04 205);
+      --theirs: oklch(0.955 0.008 230);
+      --alert: oklch(0.52 0.17 45);
+      --alert-soft: oklch(0.96 0.035 70);
+      --ok: oklch(0.62 0.16 150);
+      --off: oklch(0.72 0.01 250);
+      --focus: oklch(0.55 0.16 250);
+      --radius: 12px;
+      --ease: cubic-bezier(0.22, 1, 0.36, 1);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: oklch(0.17 0.015 250);
+        --surface: oklch(0.2 0.016 250);
+        --side: oklch(0.19 0.016 250);
+        --hover: oklch(0.25 0.02 250);
+        --line: oklch(0.3 0.02 250);
+        --fg: oklch(0.94 0.01 250);
+        --muted: oklch(0.73 0.02 250);
+        --accent: oklch(0.78 0.12 195);
+        --accent-ink: oklch(0.2 0.03 220);
+        --accent-soft: oklch(0.3 0.05 205);
+        --theirs: oklch(0.26 0.018 250);
+        --alert: oklch(0.8 0.14 70);
+        --alert-soft: oklch(0.27 0.05 60);
+        --ok: oklch(0.76 0.16 150);
+        --off: oklch(0.5 0.02 250);
+        --focus: oklch(0.8 0.12 250);
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font-size: 15px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+    ::selection { background: var(--accent); color: var(--accent-ink); }
+    :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 6px; }
+    button, textarea, input { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    .hide { display: none !important; }
+    .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    svg.i { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+    svg.i.s { width: 14px; height: 14px; }
+    * { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+
+    /* ---- welcome ---- */
+    #welcome { min-height: 100%; display: grid; place-items: center; padding: 24px; }
+    #welcome .box { width: min(420px, 100%); }
+    #welcome h1 { font-size: 40px; line-height: 1.05; letter-spacing: -0.02em; margin: 0 0 12px; text-wrap: balance; }
+    #welcome p { color: var(--muted); margin: 0 0 24px; text-wrap: pretty; }
+    #welcome label { display: block; font-weight: 600; margin-bottom: 6px; }
+    #welcome input { width: 100%; height: 48px; padding: 0 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+    #welcome input:focus-visible { outline-offset: 0; }
+    #welcome .go { width: 100%; height: 48px; margin-top: 12px; border: 0; border-radius: var(--radius); background: var(--accent); color: var(--accent-ink); font-weight: 600; transition: transform .15s var(--ease); }
+    #welcome .go:active { transform: scale(.98); }
+    #welcome ul { list-style: none; padding: 0; margin: 28px 0 0; display: grid; gap: 8px; color: var(--muted); font-size: 14px; }
+    #welcome li { display: flex; gap: 10px; align-items: center; }
+    #welcome li svg { color: var(--accent); }
+
+    /* ---- app shell ---- */
+    #app { height: 100dvh; display: grid; grid-template-columns: 340px minmax(0, 1fr); }
+    #side { background: var(--side); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+    .me { display: flex; align-items: center; gap: 12px; padding: 14px 16px 10px; }
+    .me .who { min-width: 0; flex: 1; }
+    .me strong { display: block; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fp { background: none; border: 0; padding: 0; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; letter-spacing: .02em; display: inline-flex; gap: 6px; align-items: center; min-height: 24px; }
+    .fp:hover { color: var(--fg); }
+    .mesh { margin: 0 12px 8px; padding: 10px 12px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--line); display: flex; gap: 10px; align-items: center; font-size: 13px; }
+    .mesh .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--off); flex: none; }
+    .mesh.on .dot { background: var(--ok); box-shadow: 0 0 0 4px color-mix(in oklch, var(--ok) 25%, transparent); }
+    .mesh b { display: block; font-weight: 600; }
+    .mesh span { color: var(--muted); }
+    #convs { flex: 1; overflow-y: auto; padding: 4px 8px 16px; }
+    .group { margin: 14px 10px 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+    .conv { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; padding: 8px 10px; border: 0; border-radius: var(--radius); background: none; text-align: left; transition: background .15s var(--ease); }
+    .conv:hover { background: var(--hover); }
+    .conv[aria-current="true"] { background: var(--accent-soft); }
+    .conv .txt { flex: 1; min-width: 0; }
+    .conv .row { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
+    .conv .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .conv .tm { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+    .conv .pv { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .conv.unread .nm, .conv.unread .pv { color: var(--fg); }
+    .conv.unread .pv { font-weight: 600; }
+    .badge { background: var(--accent); color: var(--accent-ink); border-radius: 10px; font-size: 12px; min-width: 20px; height: 20px; display: inline-grid; place-items: center; padding: 0 6px; font-weight: 700; flex: none; }
+    .badge.alert { background: var(--alert); color: var(--surface); }
+    .av { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; flex: none; font-weight: 700; font-size: 15px; position: relative; color: oklch(0.2 0.04 var(--h, 220)); background: oklch(0.86 0.08 var(--h, 220)); }
+    @media (prefers-color-scheme: dark) { .av { color: oklch(0.93 0.04 var(--h, 220)); background: oklch(0.38 0.08 var(--h, 220)); } }
+    .av.room { background: var(--accent-soft); color: var(--accent); }
+    .av.room.alert { background: var(--alert-soft); color: var(--alert); }
+    .av .pres { position: absolute; right: -1px; bottom: -1px; width: 12px; height: 12px; border-radius: 50%; background: var(--off); border: 2px solid var(--side); }
+    .av .pres.on { background: var(--ok); }
+    .empty-list { margin: 8px 10px; color: var(--muted); font-size: 13px; text-wrap: pretty; }
+
+    #chat { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; background: var(--bg); }
+    .chat-head { display: flex; align-items: center; gap: 10px; padding: 10px 16px; min-height: 64px; border-bottom: 1px solid var(--line); background: var(--surface); }
+    .chat-head h2 { margin: 0; font-size: 16px; line-height: 1.2; }
+    .chat-head p { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
+    .chat-head .ttl { min-width: 0; flex: 1; }
+    #back { display: none; width: 44px; height: 44px; margin-left: -8px; border: 0; background: none; border-radius: 50%; place-items: center; }
+    #back:hover { background: var(--hover); }
+    #msgs { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 2px; overscroll-behavior: contain; }
+    .day { align-self: center; margin: 10px 0 6px; font-size: 12px; color: var(--muted); }
+    .m { max-width: min(560px, 82%); align-self: flex-start; display: flex; flex-direction: column; margin-top: 8px; }
+    .m.cont { margin-top: 0; }
+    .m.mine { align-self: flex-end; align-items: flex-end; }
+    .m .who { font-size: 12px; font-weight: 600; margin: 0 0 2px 12px; color: var(--muted); }
+    .m .b { padding: 8px 12px; border-radius: 16px; background: var(--theirs); overflow-wrap: anywhere; white-space: pre-wrap; text-wrap: pretty; }
+    .m.mine .b { background: var(--accent); color: var(--accent-ink); }
+    .m.alert .b { background: var(--alert-soft); color: var(--fg); border: 1px solid var(--alert); }
+    .m .meta { font-size: 12px; color: var(--muted); margin: 2px 6px 0; display: flex; gap: 6px; align-items: center; font-variant-numeric: tabular-nums; }
+    .m .meta.ok { color: var(--ok); }
+    .m .meta.wait { color: var(--alert); }
+    .m .meta.pending { color: var(--alert); }
+    .empty { margin: auto; max-width: 340px; text-align: center; color: var(--muted); display: grid; gap: 10px; justify-items: center; text-wrap: balance; }
+    .empty svg { width: 40px; height: 40px; color: var(--accent); stroke-width: 1.4; }
+    .empty b { color: var(--fg); font-size: 17px; }
+    #jump { position: absolute; left: 50%; transform: translateX(-50%); bottom: 112px; padding: 8px 14px; border-radius: 20px; border: 1px solid var(--line); background: var(--surface); box-shadow: 0 4px 14px oklch(0 0 0 / .18); font-size: 13px; display: flex; gap: 6px; align-items: center; }
+    .composer { padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: var(--surface); }
+    .composer .line { display: flex; gap: 8px; align-items: flex-end; }
+    #text { flex: 1; min-width: 0; resize: none; border: 1px solid var(--line); background: var(--bg); border-radius: 22px; padding: 11px 16px; max-height: 140px; line-height: 1.35; overflow-y: auto; scrollbar-width: none; }
+    #text:focus-visible { outline-offset: 0; }
+    #text::placeholder { color: var(--muted); }
+    .send { height: 44px; min-width: 44px; padding: 0 16px; border: 0; border-radius: 22px; background: var(--accent); color: var(--accent-ink); font-weight: 600; display: inline-flex; gap: 8px; align-items: center; justify-content: center; transition: transform .15s var(--ease), opacity .15s; }
+    .send:active:not(:disabled) { transform: scale(.95); }
+    .send:disabled { opacity: .4; cursor: default; }
+    .composer.alert .send { background: var(--alert); color: var(--surface); }
+    .composer.alert #text { border-color: var(--alert); }
+    .composer .hint { margin: 6px 6px 0; font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; text-wrap: pretty; }
+    #toast { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 20px); opacity: 0; pointer-events: none; background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 10px; font-size: 13px; transition: opacity .2s var(--ease), transform .2s var(--ease); z-index: 10; }
+    #toast.show { opacity: 1; transform: translate(-50%, 0); }
+    .m { animation: in .2s var(--ease); }
+    @keyframes in { from { opacity: 0; transform: translateY(6px); } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+    /* ---- phone: one pane at a time ---- */
+    @media (max-width: 760px) {
+      #app { grid-template-columns: 1fr; }
+      #app[data-view="list"] #chat, #app[data-view="chat"] #side { display: none; }
+      #back { display: grid; }
+      .m { max-width: 90%; }
+      #jump { bottom: 120px; }
+    }
   </style>
 </head>
 <body>
-  <div id="setup" class="hide">
-    <form id="setupForm">
-      <h1>ChaX</h1>
-      <p>Messagerie en réseau maillé : pas de compte, pas de serveur. Choisissez un pseudo. Votre identité (clés) est créée et gardée dans ce navigateur.</p>
-      <input id="nick" maxlength="24" placeholder="Pseudo" autocomplete="off" />
-      <button class="primary" type="submit">Entrer dans le mesh</button>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-hash" viewBox="0 0 24 24"><path d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 10v4M12 17.2v.1"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12 20 4l-5 16-3.5-6.5L4 12Z"/><path d="m11.5 13.5 3.5-4"/></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="m14 6-6 6 6 6"/></symbol>
+      <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+      <symbol id="i-checks" viewBox="0 0 24 24"><path d="m2.5 12.5 4.5 4.5 9-10M12 15l1.5 2L22 7.5"/></symbol>
+      <symbol id="i-radio" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.9 4.9a10 10 0 0 0 0 14.2M19.1 4.9a10 10 0 0 1 0 14.2"/></symbol>
+      <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4V5Z"/></symbol>
+      <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.7-3.6 3.5-5.5 7-5.5s6.3 1.9 7 5.5"/></symbol>
+    </defs>
+  </svg>
+
+  <div id="welcome" class="hide">
+    <form class="box" id="welcomeForm">
+      <h1>Discutez sans réseau.</h1>
+      <p>ChaX relie directement les appareils proches : pas de compte, pas de serveur, pas de numéro de téléphone.</p>
+      <label for="nick">Votre pseudo</label>
+      <input id="nick" maxlength="24" autocomplete="off" autocapitalize="words" spellcheck="false" />
+      <button class="go" type="submit">Rejoindre le mesh</button>
+      <ul>
+        <li><svg class="i"><use href="#i-lock" /></svg>Messages privés chiffrés de bout en bout</li>
+        <li><svg class="i"><use href="#i-radio" /></svg>Les messages sautent d’appareil en appareil</li>
+        <li><svg class="i"><use href="#i-clock" /></svg>Un destinataire absent reçoit plus tard, par un relais</li>
+      </ul>
     </form>
   </div>
-  <aside>
-    <div class="me">
-      <b id="meName">—</b>
-      <small id="meId"></small>
-      <div class="stats"><span>voisins <b id="nNeighbors">0</b></span><span>portés <b id="nCarried">0</b></span></div>
-    </div>
-    <nav id="convs"></nav>
-  </aside>
-  <main>
-    <header><h2 id="title">Public</h2><small id="sub"></small></header>
-    <div id="msgs"></div>
-    <form id="send">
-      <input id="text" autocomplete="off" placeholder="Écrire un message…" />
-      <button class="warn hide" id="alertBtn" type="button" title="Alerte prioritaire, portée par les relais">⚠</button>
-      <button class="primary" type="submit">Envoyer</button>
-    </form>
-  </main>
+
+  <div id="app" class="hide" data-view="list">
+    <aside id="side" aria-label="Conversations">
+      <div class="me">
+        <span class="av" id="meAv" aria-hidden="true"></span>
+        <div class="who">
+          <strong id="meName"></strong>
+          <button class="fp" id="fp" type="button" title="Copier mon empreinte pour la faire vérifier en personne"><span id="meFp"></span><svg class="i s"><use href="#i-copy" /></svg><span class="sr">Copier mon empreinte</span></button>
+        </div>
+      </div>
+      <div class="mesh" id="mesh" role="status"><span class="dot"></span><div><b id="meshTitle"></b><span id="meshSub"></span></div></div>
+      <nav id="convs" aria-label="Liste des conversations"></nav>
+    </aside>
+    <main id="chat" aria-label="Conversation">
+      <header class="chat-head">
+        <button id="back" type="button" aria-label="Retour aux conversations"><svg class="i"><use href="#i-back" /></svg></button>
+        <span class="av" id="chAv" aria-hidden="true"></span>
+        <div class="ttl"><h2 id="title"></h2><p id="sub"></p></div>
+      </header>
+      <div id="msgs" role="log" aria-live="polite" aria-label="Messages" tabindex="0"></div>
+      <button id="jump" class="hide" type="button"><svg class="i s"><use href="#i-down" /></svg>Nouveaux messages</button>
+      <form class="composer" id="composer">
+        <div class="line">
+          <label for="text" class="sr">Votre message</label>
+          <textarea id="text" rows="1" enterkeyhint="send"></textarea>
+          <button class="send" id="sendBtn" type="submit" disabled><svg class="i"><use href="#i-send" /></svg><span id="sendLbl">Envoyer</span></button>
+        </div>
+        <p class="hint" id="hint"></p>
+      </form>
+    </main>
+  </div>
+  <div id="toast" role="status" aria-live="polite"></div>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

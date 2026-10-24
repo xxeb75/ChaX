@@ -15,6 +15,7 @@ import {
   seal,
   sign,
   signedBytes,
+  toHex,
   verify,
   type ChatMessage,
   type Packet,
@@ -251,6 +252,18 @@ describe('store-and-forward', () => {
     // the ACK purged B's copy of the DM (only announces remain)
     const left = b.store.all(r.net.now()).filter((p) => p.type !== PacketType.ANNOUNCE);
     expect(left).toHaveLength(0);
+  });
+
+  it('tells the sender when a direct message was acknowledged', () => {
+    const r = rig(3);
+    chain(r);
+    r.net.run(1000);
+    const [a, , c] = r.nodes as [ChaxNode, ChaxNode, ChaxNode];
+    const delivered: string[] = [];
+    a.onDelivered((id) => delivered.push(id));
+    const id = a.sendDirect(c.peerId, 'accuse moi');
+    r.net.run(1000);
+    expect(delivered).toEqual([toHex(id)]);
   });
 
   it('does not redeliver the same message on later meetings', () => {

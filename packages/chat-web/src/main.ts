@@ -10,16 +10,21 @@ import {
   type Identity,
 } from '../../core/src';
 
+type Status = 'pending' | 'sent' | 'delivered';
+
 interface Line {
+  id?: string; // hex msgId, for direct messages we sent
   mine: boolean;
-  from: string; // nickname shown for others
+  from: string;
   text: string;
   at: number;
   alert?: boolean;
+  status?: Status;
 }
 
 const PUBLIC = 'public';
 const ALERTS = 'alerts';
+const GROUP_GAP_MS = 5 * 60 * 1000;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 // ---- storage (per tab, so several tabs act as distinct nodes; best effort) ------
@@ -52,21 +57,28 @@ function loadIdentity(): Identity {
 
 const history: Record<string, Line[]> = load('chax.history') ?? {};
 const unread: Record<string, number> = {};
-const names = new Map<string, string>(); // peerId hex -> last known nickname
+const names = new Map<string, string>(Object.entries(load<Record<string, string>>('chax.names') ?? {}));
 let current = PUBLIC;
 let node: ChaxNode;
+let stick = true;
+
+function persist(): void {
+  save('chax.history', history);
+}
 
 function push(conv: string, line: Line): void {
   const list = (history[conv] ??= []);
   list.push(line);
   if (list.length > 200) list.shift();
-  save('chax.history', history);
-  if (conv === current) renderMessages();
-  else unread[conv] = (unread[conv] ?? 0) + 1;
-  renderConvs();
+  persist();
+  const visible = conv === current && !document.hidden && $('app').dataset.view === 'chat';
+  if (conv === current) renderChat(line.mine);
+  if (!line.mine && !visible) unread[conv] = (unread[conv] ?? 0) + 1;
+  renderList();
+  updateTitle();
 }
 
-// ---- rendering ----------------------------------------------------------------
+// ---- small helpers ------------------------------------------------------------
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -75,134 +87,431 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
   return e;
 }
 
-function fmt(t: number): string {
+function icon(name: string, small = false): SVGSVGElement {
+  const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  s.setAttribute('class', small ? 'i s' : 'i');
+  s.setAttribute('aria-hidden', 'true');
+  const u = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  u.setAttribute('href', `#i-${name}`);
+  s.append(u);
+  return s;
+}
+
+function hue(key: string): number {
+  let h = 0;
+  for (const c of key) h = (h * 31 + c.charCodeAt(0)) % 360;
+  return h;
+}
+
+function avatar(key: string, label: string, presence?: boolean): HTMLElement {
+  const a = el('span', 'av');
+  if (key === PUBLIC) {
+    a.classList.add('room');
+    a.append(icon('hash'));
+  } else if (key === ALERTS) {
+    a.classList.add('room', 'alert');
+    a.append(icon('alert'));
+  } else {
+    a.style.setProperty('--h', String(hue(key)));
+    a.append(document.createTextNode((label.trim()[0] ?? '?').toUpperCase()));
+    if (presence !== undefined) a.append(el('span', `pres${presence ? ' on' : ''}`));
+  }
+  return a;
+}
+
+function clock(t: number): string {
   return new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function renderMessages(): void {
-  const box = $('msgs');
-  box.replaceChildren();
-  const list = history[current] ?? [];
-  if (!list.length) {
-    const e = el('div', 'empty');
-    e.textContent =
-      current === PUBLIC
-        ? "Salon public : tout nœud à portée du mesh le reçoit. Ouvrez ChaX dans un autre onglet pour discuter."
-        : current === ALERTS
-          ? 'Les alertes signées apparaissent ici. Elles sont portées par les relais jusqu’à expiration.'
-          : 'Message privé chiffré de bout en bout. Il sera porté par les relais si la personne est hors de portée.';
-    box.append(e);
-  }
-  for (const l of list) {
-    const m = el('div', `m${l.mine ? ' mine' : ''}${l.alert ? ' alert' : ''}`);
-    if (!l.mine) m.append(el('div', 'who', l.from));
-    m.append(document.createTextNode(l.text));
-    m.append(el('span', 't', fmt(l.at)));
-    box.append(m);
-  }
-  box.scrollTop = box.scrollHeight;
-  unread[current] = 0;
-  const isPeer = current !== PUBLIC && current !== ALERTS;
-  $('title').textContent = current === PUBLIC ? '# Public' : current === ALERTS ? '⚠ Alertes' : `🔒 ${names.get(current) ?? current.slice(0, 8)}`;
-  $('sub').textContent = isPeer ? `empreinte ${current.slice(0, 8)}` : '';
-  $('alertBtn').classList.toggle('hide', current !== ALERTS && current !== PUBLIC);
-  ($('text') as HTMLInputElement).disabled = current === ALERTS;
+function stamp(t: number): string {
+  const d = new Date(t);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) return clock(t);
+  return d.toLocaleDateString([], { day: 'numeric', month: 'short' });
 }
 
-function convButton(key: string, label: string, online?: boolean): HTMLButtonElement {
-  const b = el('button', `conv${key === current ? ' active' : ''}`);
-  if (online !== undefined) b.append(el('span', `dot${online ? ' on' : ''}`));
-  b.append(el('span', 'name', label));
-  const n = unread[key] ?? 0;
-  if (n > 0) b.append(el('span', 'badge', String(n)));
-  b.onclick = () => {
-    current = key;
-    renderMessages();
-    renderConvs();
-  };
+function dayLabel(t: number): string {
+  const d = new Date(t);
+  const now = new Date();
+  const y = new Date(now);
+  y.setDate(now.getDate() - 1);
+  if (d.toDateString() === now.toDateString()) return "Aujourd'hui";
+  if (d.toDateString() === y.toDateString()) return 'Hier';
+  return d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
+function spaced(hex: string): string {
+  return hex.replace(/(.{4})/g, '$1 ').trim();
+}
+
+let toastTimer: number | undefined;
+function toast(msg: string): void {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+function neighborIds(): Set<string> {
+  return new Set(node.neighbors.values());
+}
+
+function isPeerKey(k: string): boolean {
+  return k !== PUBLIC && k !== ALERTS;
+}
+
+// ---- conversation list ---------------------------------------------------------
+
+let listSig = '';
+function renderList(): void {
+  const online = neighborIds();
+  const hasNeighbors = node.neighbors.size > 0;
+  let renamed = false;
+  for (const [id, p] of node.peers) {
+    const nm = p.nickname || id.slice(0, 8);
+    if (id !== node.peerId && names.get(id) !== nm) {
+      names.set(id, nm);
+      renamed = true;
+    }
+  }
+  if (renamed) save('chax.names', Object.fromEntries(names));
+
+  // mesh status
+  const mesh = $('mesh');
+  mesh.classList.toggle('on', hasNeighbors);
+  const n = node.neighbors.size;
+  const carried = node.store.all(Date.now()).filter((p) => p.type !== PacketType.ANNOUNCE).length;
+  $('meshTitle').textContent = hasNeighbors ? `${n} appareil${n > 1 ? 's' : ''} à portée` : 'Personne à portée';
+  $('meshSub').textContent = hasNeighbors
+    ? carried > 0
+      ? `${carried} message${carried > 1 ? 's' : ''} porté${carried > 1 ? 's' : ''} pour d’autres`
+      : 'Vos messages partent tout de suite'
+    : 'Vos messages privés attendent un voisin';
+
+  const keys = [...new Set([...node.peers.keys()].filter((k) => k !== node.peerId).concat(Object.keys(history).filter(isPeerKey)))];
+  const last = (k: string) => history[k]?.[history[k]!.length - 1];
+  keys.sort((a, b) => (last(b)?.at ?? 0) - (last(a)?.at ?? 0) || (names.get(a) ?? '').localeCompare(names.get(b) ?? ''));
+
+  const rows = [PUBLIC, ALERTS, ...keys].map((k) => ({
+    k,
+    label: k === PUBLIC ? 'Public' : k === ALERTS ? 'Alertes' : (names.get(k) ?? k.slice(0, 8)),
+    pv: last(k),
+    un: unread[k] ?? 0,
+    on: isPeerKey(k) ? online.has(k) : undefined,
+    cur: k === current,
+  }));
+  const sig = JSON.stringify(rows);
+  if (sig === listSig) return;
+  listSig = sig;
+
+  const nav = $('convs');
+  const hadFocus = nav.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.k : undefined;
+  nav.replaceChildren();
+  nav.append(el('div', 'group', 'Salons'));
+  for (const r of rows.slice(0, 2)) nav.append(row(r));
+  nav.append(el('div', 'group', `Personnes (${keys.length})`));
+  if (!keys.length) {
+    nav.append(el('p', 'empty-list', 'Personne pour l’instant. Les appareils proches apparaîtront ici dès qu’ils seront détectés.'));
+  }
+  for (const r of rows.slice(2)) nav.append(row(r));
+  if (hadFocus) nav.querySelector<HTMLElement>(`[data-k="${CSS.escape(hadFocus)}"]`)?.focus();
+}
+
+function row(r: { k: string; label: string; pv?: Line; un: number; on?: boolean; cur: boolean }): HTMLButtonElement {
+  const b = el('button', `conv${r.un ? ' unread' : ''}`);
+  b.type = 'button';
+  b.dataset.k = r.k;
+  if (r.cur) b.setAttribute('aria-current', 'true');
+  b.append(avatar(r.k, r.label, r.on));
+  const txt = el('span', 'txt');
+  const top = el('span', 'row');
+  top.append(el('span', 'nm', r.label));
+  if (r.pv) top.append(el('span', 'tm', stamp(r.pv.at)));
+  const bottom = el('span', 'row');
+  const preview = r.pv ? `${r.pv.mine ? 'Vous : ' : r.k === PUBLIC || r.k === ALERTS ? `${r.pv.from} : ` : ''}${r.pv.text}` : emptyPreview(r.k, r.on);
+  bottom.append(el('span', 'pv', preview));
+  if (r.un) bottom.append(el('span', `badge${r.k === ALERTS ? ' alert' : ''}`, String(r.un)));
+  txt.append(top, bottom);
+  b.append(txt);
+  b.onclick = () => open(r.k);
   return b;
 }
 
-function renderConvs(): void {
-  const nav = $('convs');
-  nav.replaceChildren();
-  nav.append(el('h3', undefined, 'Salons'));
-  nav.append(convButton(PUBLIC, '# Public'), convButton(ALERTS, '⚠ Alertes'));
-  const online = new Set(node.neighbors.values());
-  const peers = [...node.peers.entries()].filter(([id]) => id !== node.peerId);
-  nav.append(el('h3', undefined, `Contacts (${peers.length})`));
-  for (const [id, p] of peers) {
-    names.set(id, p.nickname || id.slice(0, 8));
-    nav.append(convButton(id, p.nickname || id.slice(0, 8), online.has(id)));
-  }
-  $('nNeighbors').textContent = String(node.neighbors.size);
-  $('nCarried').textContent = String(
-    node.store.all(Date.now()).filter((p) => p.type !== PacketType.ANNOUNCE).length,
-  );
+function emptyPreview(k: string, on?: boolean): string {
+  if (k === PUBLIC) return 'Visible par tout le mesh';
+  if (k === ALERTS) return 'Urgences signées';
+  return on ? 'À portée · dites bonjour' : 'Hors de portée';
 }
 
-// ---- actions ------------------------------------------------------------------
+// ---- chat pane -----------------------------------------------------------------
 
-$('send').onsubmit = (ev) => {
-  ev.preventDefault();
-  const input = $<HTMLInputElement>('text');
+function open(key: string): void {
+  const wasList = $('app').dataset.view === 'list';
+  current = key;
+  unread[key] = 0;
+  stick = true;
+  $('app').dataset.view = 'chat';
+  if (wasList && window.matchMedia('(max-width: 760px)').matches) history_push();
+  renderChat(true);
+  renderList();
+  updateTitle();
+  if (!window.matchMedia('(max-width: 760px)').matches) ($('text') as HTMLTextAreaElement).focus();
+}
+
+function history_push(): void {
+  try {
+    window.history.pushState({ chat: true }, '');
+  } catch {
+    /* ignore */
+  }
+}
+
+function backToList(): void {
+  $('app').dataset.view = 'list';
+}
+$('back').onclick = () => {
+  if (window.history.state?.chat) window.history.back();
+  else backToList();
+};
+window.addEventListener('popstate', backToList);
+
+function statusOf(l: Line): Status | undefined {
+  if (!l.mine || !l.status) return undefined;
+  if (l.status === 'pending' && node.neighbors.size > 0) return 'sent';
+  return l.status;
+}
+
+function metaFor(l: Line): HTMLElement {
+  const m = el('span', 'meta');
+  const st = statusOf(l);
+  m.append(document.createTextNode(clock(l.at)));
+  if (st === 'delivered') {
+    m.classList.add('ok');
+    m.append(icon('checks', true), document.createTextNode('Remis'));
+  } else if (st === 'sent') {
+    m.append(icon('check', true), document.createTextNode('Envoyé'));
+  } else if (st === 'pending') {
+    m.classList.add('pending');
+    m.append(icon('clock', true), document.createTextNode('En attente d’un voisin'));
+  }
+  return m;
+}
+
+function renderChat(forceBottom = false): void {
+  const box = $('msgs');
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  const list = history[current] ?? [];
+  box.replaceChildren();
+  header();
+  composer();
+
+  if (!list.length) {
+    const e = el('div', 'empty');
+    e.append(icon(current === ALERTS ? 'alert' : current === PUBLIC ? 'radio' : 'lock'));
+    if (current === PUBLIC) {
+      e.append(el('b', undefined, 'Le salon de tout le mesh'));
+      e.append(el('span', undefined, 'Chaque appareil à portée reçoit vos messages et les fait suivre. Ouvrez ChaX dans un autre onglet pour essayer.'));
+    } else if (current === ALERTS) {
+      e.append(el('b', undefined, 'Aucune alerte'));
+      e.append(el('span', undefined, 'Une alerte est signée, prioritaire, et portée par les relais jusqu’à 24 h : même ceux qui arrivent plus tard la reçoivent.'));
+    } else {
+      e.append(el('b', undefined, `Dites bonjour à ${names.get(current) ?? 'ce contact'}`));
+      e.append(el('span', undefined, 'Vos messages sont chiffrés. Si la personne est hors de portée, un relais les porte jusqu’à son retour.'));
+    }
+    box.append(e);
+  }
+
+  let prev: Line | undefined;
+  for (const l of list) {
+    if (!prev || new Date(prev.at).toDateString() !== new Date(l.at).toDateString()) box.append(el('div', 'day', dayLabel(l.at)));
+    const cont = !!prev && prev.mine === l.mine && prev.from === l.from && l.at - prev.at < GROUP_GAP_MS && new Date(prev.at).toDateString() === new Date(l.at).toDateString();
+    const m = el('div', `m${l.mine ? ' mine' : ''}${l.alert ? ' alert' : ''}${cont ? ' cont' : ''}`);
+    if (!l.mine && !cont && current !== names.get(current)) {
+      if (!isPeerKey(current)) m.append(el('span', 'who', l.from));
+    }
+    m.append(el('div', 'b', l.text));
+    const nextSame = list[list.indexOf(l) + 1];
+    const lastOfGroup = !nextSame || nextSame.mine !== l.mine || nextSame.from !== l.from || nextSame.at - l.at >= GROUP_GAP_MS;
+    if (lastOfGroup || statusOf(l) === 'pending') m.append(metaFor(l));
+    box.append(m);
+    prev = l;
+  }
+
+  if (forceBottom || stick || nearBottom) {
+    box.scrollTop = box.scrollHeight;
+    $('jump').classList.add('hide');
+  } else {
+    $('jump').classList.remove('hide');
+  }
+}
+
+$('msgs').addEventListener('scroll', () => {
+  const b = $('msgs');
+  stick = b.scrollHeight - b.scrollTop - b.clientHeight < 80;
+  if (stick) $('jump').classList.add('hide');
+});
+$('jump').onclick = () => {
+  const b = $('msgs');
+  b.scrollTop = b.scrollHeight;
+};
+
+function header(): void {
+  const online = neighborIds();
+  $('chAv').replaceWith(Object.assign(avatar(current, names.get(current) ?? '', isPeerKey(current) ? online.has(current) : undefined), { id: 'chAv' }));
+  const title = current === PUBLIC ? 'Public' : current === ALERTS ? 'Alertes' : (names.get(current) ?? current.slice(0, 8));
+  $('title').textContent = title;
+  let sub = '';
+  if (current === PUBLIC) sub = `${node.neighbors.size} à portée · visible par tout le mesh`;
+  else if (current === ALERTS) sub = 'Signées, prioritaires, portées par les relais';
+  else sub = online.has(current) ? 'À portée · chiffré de bout en bout' : 'Hors de portée · un relais portera vos messages';
+  $('sub').textContent = sub;
+}
+
+function composer(): void {
+  const form = $('composer');
+  const alert = current === ALERTS;
+  form.classList.toggle('alert', alert);
+  const input = $<HTMLTextAreaElement>('text');
+  input.placeholder = alert ? 'Lieu, danger, besoin : soyez précis et bref' : current === PUBLIC ? 'Écrire au mesh' : `Message à ${names.get(current) ?? 'ce contact'}`;
+  const lbl = $('sendLbl');
+  lbl.textContent = alert ? 'Diffuser l’alerte' : 'Envoyer';
+  $('sendBtn').setAttribute('aria-label', alert ? 'Diffuser l’alerte' : 'Envoyer');
+  const hint = $('hint');
+  hint.replaceChildren();
+  if (alert) hint.append(icon('alert', true), document.createTextNode('Part chez tout le monde, y compris les appareils qui arriveront plus tard (24 h).'));
+  else if (current === PUBLIC) hint.append(icon('radio', true), document.createTextNode('Entrée pour envoyer · Maj+Entrée pour un retour à la ligne'));
+  else hint.append(icon('lock', true), document.createTextNode('Chiffré de bout en bout · Entrée pour envoyer'));
+  syncSend();
+}
+
+function syncSend(): void {
+  ($('sendBtn') as HTMLButtonElement).disabled = !$<HTMLTextAreaElement>('text').value.trim();
+}
+
+function autosize(): void {
+  const t = $<HTMLTextAreaElement>('text');
+  t.style.height = 'auto';
+  t.style.height = `${Math.min(140, t.scrollHeight)}px`;
+}
+
+function updateTitle(): void {
+  const total = Object.values(unread).reduce((a, b) => a + b, 0);
+  document.title = total ? `(${total}) ChaX` : 'ChaX';
+}
+
+// ---- actions -------------------------------------------------------------------
+
+function submit(): void {
+  const input = $<HTMLTextAreaElement>('text');
   const text = input.value.trim();
   if (!text) return;
-  input.value = '';
+  const base = { mine: true, from: node.nickname, text, at: Date.now() };
   if (current === PUBLIC) {
     node.sendBroadcast(text);
-    push(PUBLIC, { mine: true, from: node.nickname, text, at: Date.now() });
-  } else if (current !== ALERTS) {
+    push(PUBLIC, base);
+  } else if (current === ALERTS) {
+    node.sendAlert(text);
+    push(ALERTS, { ...base, alert: true });
+  } else {
     try {
-      node.sendDirect(current, text);
-      push(current, { mine: true, from: node.nickname, text, at: Date.now() });
+      const id = toHex(node.sendDirect(current, text));
+      push(current, { ...base, id, status: node.neighbors.size ? 'sent' : 'pending' });
     } catch {
-      push(current, { mine: false, from: 'ChaX', text: 'Clé inconnue : impossible de chiffrer pour le moment.', at: Date.now() });
+      toast('Clé de ce contact inconnue : réessayez dans un instant');
+      return;
     }
   }
-};
-
-$('alertBtn').onclick = () => {
-  const input = $<HTMLInputElement>('text');
-  const text = input.value.trim();
-  if (!text) {
-    input.focus();
-    return;
-  }
   input.value = '';
-  node.sendAlert(text);
-  push(ALERTS, { mine: true, from: node.nickname, text, at: Date.now(), alert: true });
-};
+  autosize();
+  syncSend();
+  stick = true;
+}
 
-// ---- boot ---------------------------------------------------------------------
+$('composer').onsubmit = (ev) => {
+  ev.preventDefault();
+  submit();
+};
+$('text').addEventListener('input', () => {
+  autosize();
+  syncSend();
+});
+$('text').addEventListener('keydown', (ev) => {
+  const e = ev as KeyboardEvent;
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    submit();
+  }
+});
+$('fp').onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(node.peerId);
+    toast('Empreinte copiée');
+  } catch {
+    toast(`Empreinte : ${spaced(node.peerId)}`);
+  }
+};
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && $('app').dataset.view === 'chat') {
+    unread[current] = 0;
+    renderList();
+    updateTitle();
+  }
+});
+
+// ---- boot ----------------------------------------------------------------------
 
 function start(nickname: string): void {
   const transport = new BroadcastChannelTransport();
   node = new ChaxNode({ transport, identity: loadIdentity(), nickname });
+  $('welcome').classList.add('hide');
+  $('app').classList.remove('hide');
   $('meName').textContent = nickname;
-  $('meId').textContent = `empreinte ${node.peerId}`;
+  $('meFp').textContent = spaced(node.peerId);
+  $('meAv').replaceWith(Object.assign(avatar(node.peerId, nickname), { id: 'meAv' }));
+
   node.onMessage((m: ChatMessage) => {
     const who = m.nickname || m.from.slice(0, 8);
-    if (m.alert) push(ALERTS, { mine: false, from: who, text: m.text, at: Date.now(), alert: true });
-    else if (m.direct) push(m.from, { mine: false, from: who, text: m.text, at: Date.now() });
-    else push(PUBLIC, { mine: false, from: who, text: m.text, at: Date.now() });
+    const line: Line = { mine: false, from: who, text: m.text, at: Date.now() };
+    if (m.alert) push(ALERTS, { ...line, alert: true });
+    else if (m.direct) push(m.from, line);
+    else push(PUBLIC, line);
   });
-  setInterval(renderConvs, 1000);
-  renderConvs();
-  renderMessages();
+  node.onDelivered((id) => {
+    for (const list of Object.values(history)) {
+      const l = list.find((x) => x.id === id);
+      if (l) l.status = 'delivered';
+    }
+    persist();
+    renderChat();
+  });
+
+  setInterval(() => {
+    renderList();
+    header();
+    // pending -> sent as soon as a neighbour shows up
+    if (isPeerKey(current) && (history[current] ?? []).some((l) => l.status === 'pending')) renderChat();
+  }, 1000);
+
+  const wide = !window.matchMedia('(max-width: 760px)').matches;
+  $('app').dataset.view = wide ? 'chat' : 'list';
+  renderChat(true);
+  renderList();
 }
 
 const saved = load<string>('chax.nick');
 if (saved) {
   start(saved);
 } else {
-  $('setup').classList.remove('hide');
-  $<HTMLInputElement>('nick').value = `anon-${Math.random().toString(36).slice(2, 6)}`;
-  $('setupForm').onsubmit = (ev) => {
+  $('welcome').classList.remove('hide');
+  const nick = $<HTMLInputElement>('nick');
+  nick.value = `anon-${Math.random().toString(36).slice(2, 6)}`;
+  nick.focus();
+  nick.select();
+  $('welcomeForm').onsubmit = (ev) => {
     ev.preventDefault();
-    const n = $<HTMLInputElement>('nick').value.trim() || 'anon';
+    const n = nick.value.trim() || 'anon';
     save('chax.nick', n);
-    $('setup').classList.add('hide');
     start(n);
   };
 }

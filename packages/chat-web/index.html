@@ -25,6 +25,7 @@
       --dust-2: #5c5c64;
       --dust-3: #8c8c93;
       --ivory: #f1efe9;
+      --ivory-2: #c9c7c1;
       --amber: #ffb000;
       --mono: 'JetBrains Mono', 'Cascadia Code', ui-monospace, 'SFMono-Regular', Consolas, monospace;
       --fs-front: 20px;
@@ -76,10 +77,12 @@
     #app { height: 100dvh; display: grid; grid-template-columns: minmax(320px, 400px) minmax(0, 1fr); }
     #side { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--dust-1); padding-top: var(--top); }
     .top { padding: 4px 20px 0; }
-    .id { display: flex; align-items: baseline; gap: 12px; min-height: 32px; }
+    .id { display: flex; align-items: baseline; gap: 12px; min-height: 44px; }
     .id .wm { font-size: var(--fs-mid); letter-spacing: .02em; }
-    .id .fp { font-size: var(--fs-dust); color: var(--dust-3); min-height: 32px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .id .fp { font-size: var(--fs-dust); color: var(--dust-3); min-height: 44px; display: inline-flex; align-items: baseline; gap: 8px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .id .fp:hover { color: var(--ivory); }
+    .id .fp .act { color: var(--dust-3); flex: none; }
+    .id .fp:hover .act { color: var(--amber); }
     .id #flash { margin-left: auto; font-size: var(--fs-dust); color: var(--ivory); }
     .sondeLine { display: flex; align-items: baseline; gap: 12px; min-height: 28px; font-size: var(--fs-rear); color: var(--dust-3); }
     .sonde { display: inline-flex; gap: 3px; letter-spacing: 0; color: var(--dust-3); flex: none; }
@@ -131,14 +134,14 @@
     .msg .who { font-size: var(--fs-dust); color: var(--dust-3); margin-bottom: 1px; }
     .msg .txt { white-space: pre-wrap; text-wrap: pretty; }
     .msg.theirs { align-self: flex-start; color: var(--ivory); }
-    .msg.mine { align-self: flex-end; align-items: flex-end; text-align: right; color: var(--dust-3); }
+    .msg.mine { align-self: flex-end; align-items: flex-end; text-align: right; color: var(--ivory-2); }
     .msg .st { font-size: var(--fs-dust); color: var(--dust-3); margin-top: 2px; display: flex; gap: 8px; }
     .msg .st .g { letter-spacing: -.1em; }
     .msg .st.read, .msg .st.read .g { color: var(--ivory); }
     .msg .st.wait { color: var(--ivory); }
     .msg.t0 { font-size: var(--fs-front); animation: arrive .38s var(--ease) both; }
     .msg.t1 { font-size: var(--fs-mid); opacity: .95; }
-    .msg.t2 { font-size: var(--fs-rear); opacity: .92; filter: blur(.15px); }
+    .msg.t2 { font-size: var(--fs-rear); opacity: .92; }
     @keyframes arrive { from { opacity: 0; transform: translateY(8px); } }
     .msg.alert { align-self: stretch; max-width: none; background: var(--ivory); color: var(--void); padding: 10px 14px; margin-top: 12px; text-align: left; align-items: stretch; filter: none; opacity: 1; }
     .msg.alert .who, .msg.alert .st, .msg.alert .st .g { color: var(--void); }
@@ -147,6 +150,9 @@
     .empty .t { color: var(--ivory); font-size: var(--fs-front); margin-bottom: 8px; }
     .empty div { text-wrap: pretty; }
     #jump { position: absolute; right: 20px; bottom: 120px; min-height: 48px; padding: 0 8px; font-size: var(--fs-rear); color: var(--ivory); background: var(--void); }
+    #notice { margin: 0 20px 6px; padding: 10px 14px; background: var(--ivory); color: var(--void); font-size: var(--fs-rear); display: flex; gap: 12px; align-items: baseline; text-align: left; min-height: 44px; animation: arrive .38s var(--ease) both; }
+    #notice span { flex: 1; text-wrap: pretty; }
+    #notice button { min-height: 44px; color: var(--void); font-size: var(--fs-rear); white-space: nowrap; margin: -10px -6px -10px 0; padding: 0 6px; }
     .composer { padding: 6px 20px calc(var(--bottom)); }
     .composer .qline { align-items: flex-end; font-size: var(--fs-mid); min-height: 48px; }
     .composer .car { min-height: 48px; display: grid; place-items: center; font-size: var(--fs-front); }
@@ -156,17 +162,33 @@
     .sendBtn:not(:disabled):hover { color: var(--amber); }
     .sendBtn:disabled { cursor: default; }
     .composer.alert .sendBtn:not(:disabled) { background: var(--ivory); color: var(--void); padding: 0 14px; }
-    .attach { min-height: 48px; min-width: 40px; padding: 0 8px; color: var(--dust-3); font-size: var(--fs-front); text-align: center; transition: color .15s; }
+    .attach { min-height: 48px; min-width: 48px; padding: 0 10px; margin-right: 6px; color: var(--dust-3); font-size: var(--fs-mid); text-align: center; transition: color .15s; white-space: nowrap; }
     .attach:hover { color: var(--amber); }
     .msg .img { display: block; padding: 0; margin-top: 4px; max-width: 100%; }
     .msg .img img { display: block; max-width: 100%; max-height: 300px; min-height: 48px; background: var(--void-2); }
+    .msg.t1 .img img { max-height: 190px; }
+    .msg.t2 .img img { max-height: 110px; }
+    .msg .cap { font-size: var(--fs-dust); color: var(--dust-3); margin-top: 2px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .msg.mine .img { align-self: flex-end; }
-    .msg .file { display: flex; gap: 10px; align-items: baseline; width: min(420px, 78vw); min-height: 48px; color: inherit; }
+    .msg .file { display: flex; gap: 10px; align-items: baseline; width: min(420px, 78vw); min-height: 48px; color: inherit; flex-wrap: wrap; }
+    .msg .file .act { margin-left: auto; }
     .msg .file .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; min-width: 0; }
+    .msg .file .ttl { display: flex; min-width: 0; max-width: 100%; flex: 0 1 auto; }
+    .msg .file .ext { flex: none; }
     .msg .file .act { color: var(--dust-3); font-size: var(--fs-rear); flex: none; }
     .msg .file:hover .act { color: var(--amber); }
-    .xfer { display: flex; gap: 10px; align-items: baseline; font-size: var(--fs-rear); color: var(--dust-3); margin-top: 10px; max-width: min(420px, 86%); }
-    .lightbox { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: rgba(10, 10, 12, .94); cursor: zoom-out; padding: var(--top) 12px var(--bottom); }
+    .xfer { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: var(--fs-rear); color: var(--dust-3); margin-top: 10px; max-width: min(420px, 86%); }
+    .xfer.stalled { color: var(--ivory); }
+    .xfer button { min-height: 44px; color: var(--dust-3); font-size: var(--fs-rear); }
+    .xfer button:hover { color: var(--amber); }
+    .lightbox { position: fixed; inset: 0; z-index: 10; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: rgba(10, 10, 12, .985); padding: var(--top) 12px var(--bottom); }
+    .lightbox .bar { display: flex; gap: 14px; align-items: baseline; justify-content: space-between; font-size: var(--fs-rear); color: var(--dust-3); }
+    .lightbox .bar button { min-height: 48px; min-width: 48px; color: var(--ivory); font-size: var(--fs-mid); }
+    .lightbox .bar button:hover { color: var(--amber); }
+    .lightbox .bar a { color: var(--ivory); text-decoration: none; min-height: 48px; display: inline-flex; align-items: center; }
+    .lightbox .bar a:hover { color: var(--amber); }
+    .lightbox .bar > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lightbox .stage { display: grid; place-items: center; min-height: 0; overflow: auto; touch-action: pinch-zoom pan-x pan-y; }
     .lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
     .composer .hint { margin: 0; font-size: var(--fs-dust); color: var(--dust-3); min-height: 18px; }
     @media (hover: none) { .composer .hint .kb { display: none; } }
@@ -205,10 +227,10 @@
       <div class="top">
         <div class="id">
           <span class="wm" id="meName"></span>
-          <button class="fp" id="fp" type="button" aria-label="Copier mon empreinte pour la faire vérifier en personne"><span id="meFp"></span></button>
+          <button class="fp" id="fp" type="button" aria-label="Copier mon empreinte pour la faire vérifier en personne"><span id="meFp"></span><span class="act" aria-hidden="true">copier ›</span></button>
           <span id="flash" role="status" aria-live="polite"></span>
         </div>
-        <div class="sondeLine"><span class="sonde" id="sonde" aria-hidden="true"></span><span id="meshTxt" role="status"></span></div>
+        <div class="sondeLine"><span class="sonde" id="sonde" aria-hidden="true"></span><span id="meshTxt"></span></div>
         <label class="qline q"><span class="car" aria-hidden="true">›</span><span class="sr">Filtrer les conversations</span><input id="q" type="text" placeholder="chercher, entrée pour ouvrir" enterkeyhint="go" autocomplete="off" spellcheck="false" /></label>
       </div>
       <div class="groupbar"><span>conversations</span><span id="count" class="tnum"></span></div>
@@ -225,12 +247,13 @@
       </header>
       <div id="msgs" role="log" aria-live="polite" aria-label="Messages" tabindex="0"><div class="log" id="log"></div></div>
       <button id="jump" class="hide" type="button">nouveaux messages ↓</button>
+      <div id="notice" class="hide" role="alert"><span id="noticeTxt"></span><button id="noticeX" type="button">compris ›</button></div>
       <form class="composer" id="composer">
         <div class="qline">
           <span class="car" aria-hidden="true">›</span>
           <label for="text" class="sr">Votre message</label>
           <textarea id="text" rows="1" enterkeyhint="send"></textarea>
-          <button class="attach" id="attach" type="button" aria-label="Joindre une photo ou un fichier">+</button>
+          <button class="attach" id="attach" type="button" aria-label="Joindre une photo ou un fichier">+ joindre</button>
           <input id="pick" class="hide" type="file" multiple tabindex="-1" aria-hidden="true" />
           <button class="sendBtn" id="sendBtn" type="submit" disabled><span id="sendLbl">envoyer</span> ›</button>
         </div>

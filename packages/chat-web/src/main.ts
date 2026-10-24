@@ -35,6 +35,7 @@ interface Incoming {
   received: number;
   total: number;
   at: number;
+  dismissed?: boolean;
 }
 
 const PUBLIC = 'public';
@@ -146,6 +147,7 @@ for (const list of Object.values(history)) {
 }
 const unread: Record<string, number> = {};
 const incoming = new Map<string, Incoming>(); // object id -> transfer in progress
+const STALL_MS = 15_000;
 const names = new Map<string, string>(Object.entries(load<Record<string, string>>('chax.names') ?? {}));
 let current = PUBLIC;
 let cursor = PUBLIC; // keyboard cursor in the list
@@ -195,7 +197,27 @@ function dayLabel(t: number): string {
 const spaced = (hex: string) => hex.replace(/(.{4})/g, '$1 ').trim();
 const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const neighborIds = () => new Set(node.neighbors.values());
-const labelOf = (k: string) => (k === PUBLIC ? 'public' : k === ALERTS ? 'alertes' : (names.get(k) ?? k.slice(0, 8)));
+function labelOf(k: string): string {
+  if (k === PUBLIC) return 'public';
+  if (k === ALERTS) return 'alertes';
+  const nm = names.get(k) ?? k.slice(0, 8);
+  const twin = [...names].some(([o, n]) => o !== k && n === nm);
+  return twin ? `${nm} · ${k.slice(0, 4)}` : nm;
+}
+
+let noticeTimer: number | undefined;
+/** An error the user must see, whichever pane is open: ivory block above the composer. */
+function fail(msg: string): void {
+  $('noticeTxt').textContent = msg;
+  $('notice').classList.remove('hide');
+  clearTimeout(noticeTimer);
+  noticeTimer = window.setTimeout(() => $('notice').classList.add('hide'), 7000);
+  flash(msg);
+}
+$('noticeX').onclick = () => {
+  clearTimeout(noticeTimer);
+  $('notice').classList.add('hide');
+};
 
 let flashTimer: number | undefined;
 function flash(msg: string): void {
@@ -405,7 +427,10 @@ $('back').onclick = () => {
   if (window.history.state?.chat) window.history.back();
   else backToList();
 };
-window.addEventListener('popstate', backToList);
+window.addEventListener('popstate', () => {
+  if (closeLightbox) closeLightbox();
+  else backToList();
+});
 
 function statusOf(l: Line): Status | undefined {
   if (!l.mine || !l.status) return undefined;
@@ -457,7 +482,7 @@ function composer(): void {
   hint.append(
     document.createTextNode(alert ? 'part chez tout le monde, y compris ceux qui arriveront plus tard' : isPeerKey(current) ? 'chiffré' : 'visible par tous'),
   );
-  if (!alert) hint.append(span('kb', ' · entrée envoie, maj+entrée saute une ligne'));
+  if (!alert) hint.append(span('kb', ' · entrée envoie, maj+entrée saute une ligne, coller ou déposer une image pour la joindre'));
   syncSend();
 }
 
@@ -499,16 +524,30 @@ function renderChat(forceBottom = false): void {
     if (l.file) m.append(fileEl(l));
     else m.append(span('txt', l.text));
     const st = statusOf(l);
-    if (st && (st !== 'read' || l === lastRead)) m.append(statusEl(st));
+    const endsRun = !list[i + 1]?.mine;
+    if (st && (st === 'pending' || (endsRun && (st !== 'read' || l === lastRead)))) m.append(statusEl(st));
     log.append(m);
     prev = l;
   });
 
   for (const [id, t] of incoming) {
-    if (Date.now() - t.at > 120_000) incoming.delete(id);
+    if (t.dismissed || Date.now() - t.at > 6 * 3600 * 1000) incoming.delete(id);
     else if (t.key === current) {
-      const x = el('div', 'xfer');
-      x.append(span('', `${t.label} › réception`), span('fill', ''), span('tnum', `${Math.round((t.received / t.total) * 100)} %`));
+      const stalled = Date.now() - t.at > STALL_MS;
+      const x = el('div', `xfer${stalled ? ' stalled' : ''}`);
+      const pct = `${Math.round((t.received / t.total) * 100)} %`;
+      if (stalled) {
+        x.append(span('', `${t.label} › transfert interrompu à ${pct}, reprise dès qu'un appareil qui le porte repasse à portée`));
+        const b = el('button', undefined, 'abandonner ›');
+        b.type = 'button';
+        b.onclick = () => {
+          t.dismissed = true;
+          renderChat();
+        };
+        x.append(b);
+      } else {
+        x.append(span('', `${t.label} › réception`), span('fill', ''), span('tnum', pct));
+      }
       log.append(x);
     }
   }
@@ -537,16 +576,23 @@ function fileEl(l: Line): HTMLElement {
       if (u) img.src = u;
       else b.replaceWith(span('txt', `${f.name} · fichier introuvable`));
     });
-    b.onclick = () => lightbox(l.id!, f.name);
+    b.onclick = () => lightbox(l.id!, f.name, f.size);
     b.append(img);
-    return b;
+    const wrap = el('div', 'imgwrap');
+    wrap.append(b, span('cap', `${f.name} · ${size(f.size)}`));
+    return wrap;
   }
   const b = el('button', 'file');
   b.type = 'button';
-  b.append(span('nm', f.name), span('fill', ''), span('act', `${size(f.size)} · enregistrer ›`));
+  const dot = f.name.lastIndexOf('.');
+  const hasExt = dot > 0 && f.name.length - dot <= 8;
+  const title = span('ttl', '');
+  title.append(span('nm', hasExt ? f.name.slice(0, dot) : f.name));
+  if (hasExt) title.append(span('ext', f.name.slice(dot)));
+  b.append(title, span('act', `${size(f.size)} · enregistrer ›`));
   b.onclick = async () => {
     const u = await fileUrl(l.id!);
-    if (!u) return flash('fichier introuvable');
+    if (!u) return fail('Fichier introuvable : il a été supprimé de cet appareil.');
     const a = el('a');
     a.href = u;
     a.download = f.name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_') || 'fichier';
@@ -555,29 +601,57 @@ function fileEl(l: Line): HTMLElement {
   return b;
 }
 
-function lightbox(id: string, name: string): void {
+let closeLightbox: (() => void) | undefined;
+
+function lightbox(id: string, name: string, bytes: number): void {
   void fileUrl(id).then((u) => {
-    if (!u) return;
+    if (!u) return fail('Photo introuvable : elle a été supprimée de cet appareil.');
+    const back = document.activeElement as HTMLElement | null;
     const o = el('div', 'lightbox');
     o.setAttribute('role', 'dialog');
+    o.setAttribute('aria-modal', 'true');
     o.setAttribute('aria-label', name);
+    const bar = el('div', 'bar');
+    const save = el('a');
+    save.href = u;
+    save.download = name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_') || 'photo';
+    save.textContent = 'enregistrer ›';
+    const x = el('button', undefined, 'fermer ×');
+    x.type = 'button';
+    bar.append(span('', `${name} · ${size(bytes)}`), save, x);
+    const stage = el('div', 'stage');
     const img = el('img');
     img.src = u;
     img.alt = name;
-    o.append(img);
-    const close = () => {
+    stage.append(img);
+    o.append(bar, stage);
+    const shut = () => {
+      if (closeLightbox !== shut) return;
+      closeLightbox = undefined;
       o.remove();
       document.removeEventListener('keydown', onKey, true);
+      back?.focus?.();
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        close();
+        window.history.state?.lb ? window.history.back() : shut();
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+        (document.activeElement === x ? save : x).focus();
       }
     };
+    closeLightbox = shut;
+    try {
+      window.history.pushState({ ...(window.history.state ?? {}), lb: true }, '');
+    } catch {
+      /* ignore */
+    }
     document.addEventListener('keydown', onKey, true);
-    o.onclick = close;
+    x.onclick = () => (window.history.state?.lb ? window.history.back() : shut());
+    stage.onclick = x.onclick;
     document.body.append(o);
+    x.focus();
   });
 }
 
@@ -624,7 +698,7 @@ function submit(): void {
       const id = toHex(node.sendDirect(current, text));
       push(current, { ...base, id, status: node.neighbors.size ? 'transit' : 'pending' });
     } catch {
-      flash('clé inconnue, réessayez');
+      fail("Message non envoyé : clé de ce contact inconnue. Rapprochez-vous de lui pour l'échanger, puis réessayez.");
       return;
     }
   }
@@ -635,7 +709,7 @@ function submit(): void {
 }
 
 async function attach(f: File): Promise<void> {
-  if (current === ALERTS) return flash('les alertes sont du texte');
+  if (current === ALERTS) return fail('Les alertes sont du texte : retirez la pièce jointe ou écrivez dans une conversation.');
   let blob: Blob = f;
   let mime = f.type || 'application/octet-stream';
   let name = f.name || 'fichier';
@@ -651,14 +725,14 @@ async function attach(f: File): Promise<void> {
       /* keep the original */
     }
   }
-  if (blob.size > MAX_ATTACHMENT - 4096) return flash('trop gros : 2 Mo maximum');
+  if (blob.size > MAX_ATTACHMENT - 4096) return fail(`Fichier trop gros (${size(blob.size)}) : 2 Mo maximum. Réduisez-le puis réessayez.`);
   const key = current;
   const data = new Uint8Array(await blob.arrayBuffer());
   let id: string;
   try {
     id = toHex(key === PUBLIC ? node.sendFile({ name, mime, data }) : node.sendFile({ name, mime, data }, key));
   } catch {
-    return flash('clé inconnue, réessayez');
+    return fail("Clé de ce contact inconnue : rapprochez-vous de lui pour l'échanger, puis réessayez.");
   }
   await putFile(id, new Blob([data], { type: isImage(mime) ? mime : 'application/octet-stream' }));
   const line: Line = { id, mine: true, from: node.nickname, text: '', at: Date.now(), file: { name, mime, size: data.length } };

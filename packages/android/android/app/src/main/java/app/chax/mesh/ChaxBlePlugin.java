@@ -45,6 +45,7 @@ import com.getcapacitor.annotation.PermissionCallback;
 
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -85,7 +86,9 @@ public class ChaxBlePlugin extends Plugin {
     private static final int WANT_MTU = 247;
     private static final int MAX_QUEUE = 4000;
     private static final long CONNECT_TIMEOUT_MS = 15000;
-    private static final byte H_START = 0x01, H_END = 0x02, H_HELLO = (byte) 0x80;
+    private static final byte H_START = 0x01, H_END = 0x02, H_PING = 0x40, H_HELLO = (byte) 0x80;
+    private static final long PING_EVERY_MS = 8000;
+    private static final long DEAD_AFTER_MS = 30000;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Map<String, Conn> byAddress = new HashMap<>();
@@ -112,6 +115,8 @@ public class ChaxBlePlugin extends Plugin {
         boolean ready;
         boolean busy;
         String link;
+        long lastRx = System.currentTimeMillis();
+        int token; // identifies the write in flight, so a lost callback cannot stall the queue
         final ArrayDeque<byte[]> queue = new ArrayDeque<>();
         final ByteArrayOutputStream rx = new ByteArrayOutputStream();
         boolean central() { return gatt != null; }
@@ -171,7 +176,8 @@ public class ChaxBlePlugin extends Plugin {
             return;
         }
         byte[] frame = Base64.decode(data, Base64.NO_WRAP);
-        int payload = Math.max(1, c.mtu - 3 - 1);
+        // ATT values top out at 512 bytes and a peer may grant more MTU than we asked for: stay at what we requested.
+        int payload = Math.max(1, Math.min(c.mtu, WANT_MTU) - 3 - 1);
         synchronized (c.queue) {
             if (c.queue.size() > MAX_QUEUE) {
                 call.reject("queue full");
@@ -239,7 +245,31 @@ public class ChaxBlePlugin extends Plugin {
         advertise();
         scan();
         emitState("");
+        main.postDelayed(watchdog, PING_EVERY_MS);
     }
+
+    /** A link can die silently (peer restarted, out of range without a disconnect callback): ping it, drop it when mute. */
+    private final Runnable watchdog = new Runnable() {
+        @Override
+        public void run() {
+            if (!running) return;
+            long now = System.currentTimeMillis();
+            for (Conn c : new ArrayList<>(byAddress.values())) {
+                if (c.link == null) {
+                    if (now - c.lastRx > DEAD_AFTER_MS) drop(c); // connected but never said hello
+                    continue;
+                }
+                if (now - c.lastRx > DEAD_AFTER_MS) {
+                    emitState("liaison perdue, reconnexion");
+                    drop(c);
+                    continue;
+                }
+                synchronized (c.queue) { if (c.queue.size() < 4) c.queue.add(new byte[] { H_PING }); }
+                pump(c);
+            }
+            main.postDelayed(this, PING_EVERY_MS);
+        }
+    };
 
     /** Foreground service: keeps the process and the WebView alive when the screen goes off. */
     private void startKeepAlive() {
@@ -252,6 +282,7 @@ public class ChaxBlePlugin extends Plugin {
 
     private void stopRadio() {
         running = false;
+        main.removeCallbacks(watchdog);
         try { if (scanner != null) scanner.stopScan(scanCb); } catch (Exception ignored) {}
         try { if (advertiser != null) advertiser.stopAdvertising(advCb); } catch (Exception ignored) {}
         for (Conn c : new HashSet<>(byAddress.values())) drop(c);
@@ -376,6 +407,7 @@ public class ChaxBlePlugin extends Plugin {
         @Override
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
             String addr = gatt.getDevice().getAddress();
+            android.util.Log.i("ChaxBle", "client state " + newState + " status " + status + " " + addr);
             if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
                 main.post(() -> {
                     Conn c = new Conn();
@@ -441,6 +473,7 @@ public class ChaxBlePlugin extends Plugin {
 
         @Override
         public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic ch, int status) {
+            if (status != 0) android.util.Log.i("ChaxBle", "write status " + status);
             main.post(() -> {
                 Conn c = byAddress.get(gatt.getDevice().getAddress());
                 if (c != null) { c.busy = false; pump(c); }
@@ -454,6 +487,7 @@ public class ChaxBlePlugin extends Plugin {
         @Override
         public void onConnectionStateChange(BluetoothDevice device, int status, int newState) {
             String addr = device.getAddress();
+            android.util.Log.i("ChaxBle", "server state " + newState + " status " + status + " " + addr);
             main.post(() -> {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     if (!byAddress.containsKey(addr)) {
@@ -528,6 +562,8 @@ public class ChaxBlePlugin extends Plugin {
         synchronized (c.queue) { chunk = c.queue.pollFirst(); }
         if (chunk == null) return;
         c.busy = true;
+        final int tok = ++c.token;
+        main.postDelayed(() -> { if (c.busy && c.token == tok) { c.busy = false; pump(c); } }, 1500);
         boolean ok;
         try {
             if (c.central()) {
@@ -541,6 +577,7 @@ public class ChaxBlePlugin extends Plugin {
             ok = false;
         }
         if (!ok) {
+            android.util.Log.i("ChaxBle", "write refused central=" + c.central() + " len=" + chunk.length + " mtu=" + c.mtu);
             c.busy = false;
             synchronized (c.queue) { c.queue.addFirst(chunk); }
             main.postDelayed(() -> pump(c), 30);
@@ -549,7 +586,9 @@ public class ChaxBlePlugin extends Plugin {
 
     private void chunkIn(Conn c, byte[] v) {
         if (v.length == 0) return;
+        c.lastRx = System.currentTimeMillis();
         byte h = v[0];
+        if (h == H_PING) return;
         if ((h & H_HELLO) != 0) {
             String link = bytesToHex(Arrays.copyOfRange(v, 1, v.length));
             if (c.link == null && !byLink.containsKey(link)) {
@@ -576,6 +615,7 @@ public class ChaxBlePlugin extends Plugin {
     }
 
     private void drop(Conn c) {
+        android.util.Log.i("ChaxBle", "drop " + c.device.getAddress() + " link=" + c.link + " central=" + c.central() + " from line " + new Throwable().getStackTrace()[1].getLineNumber() + " idle=" + (System.currentTimeMillis() - c.lastRx) + "ms queue=" + c.queue.size());
         byAddress.remove(c.device.getAddress());
         connecting.remove(c.device.getAddress());
         if (c.link != null && byLink.get(c.link) == c) {

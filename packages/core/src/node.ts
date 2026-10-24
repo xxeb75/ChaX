@@ -21,12 +21,43 @@ const DEFAULT_EXPIRY_S = 72 * 3600;
 const SYNC_TTL = 3;
 const MAX_SEEN = 20000;
 const RELAY_JITTER_MS = 40;
+export const FRAG_SIZE = 8 * 1024;
+export const MAX_ATTACHMENT = 2 * 1024 * 1024;
+const FRAG_HEADER = ID_LEN + 2 + 2; // objId, index, total
+const MAX_FRAGS = Math.ceil((MAX_ATTACHMENT + 2048) / FRAG_SIZE) + 1;
+const MAX_ASSEMBLIES = 16;
+const FILE_EXPIRY_S = 6 * 3600;
+const ASSEMBLY_TTL_MS = 6 * 3600 * 1000;
+
+export interface Attachment {
+  name: string;
+  mime: string;
+  data: Uint8Array;
+}
+
+export interface TransferProgress {
+  id: string; // hex object id, same as ChatMessage.id once complete
+  from: string;
+  direct: boolean;
+  received: number;
+  total: number;
+}
+
+interface Assembly {
+  from: string;
+  direct: boolean;
+  total: number;
+  parts: Map<number, Uint8Array>;
+  timestamp: number;
+  startedAt: number;
+}
 
 export interface ChatMessage {
-  id: string; // hex msgId
+  id: string; // hex msgId (hex object id for attachments)
   from: string; // hex peerId
   nickname?: string;
-  text: string;
+  text: string; // empty for attachments
+  attachment?: Attachment;
   direct: boolean;
   alert: boolean;
   timestamp: number;
@@ -65,6 +96,9 @@ export class ChaxNode {
   private readHandlers: ((msgId: string) => void)[] = [];
   private awaitingRead = new Map<string, string>(); // msgId hex -> recipient peerId hex
   private awaitingAck = new Map<string, string>(); // msgId hex -> recipient peerId hex
+  private readonly assemblies = new Map<string, Assembly>(); // object id hex -> fragments received so far
+  private readonly finished = new Set<string>(); // object ids already delivered
+  private transferHandlers: ((t: TransferProgress) => void)[] = [];
 
   constructor(opts: NodeOptions) {
     this.transport = opts.transport;
@@ -94,6 +128,11 @@ export class ChaxNode {
   /** Called with the hex msgId of a direct message once its recipient has read it. */
   onRead(cb: (msgId: string) => void): void {
     this.readHandlers.push(cb);
+  }
+
+  /** Called as fragments of an incoming attachment arrive. */
+  onTransfer(cb: (t: TransferProgress) => void): void {
+    this.transferHandlers.push(cb);
   }
 
   // ---- sending -------------------------------------------------------
@@ -132,6 +171,35 @@ export class ChaxNode {
     this.awaitingAck.set(toHex(id), to);
     this.awaitingRead.set(toHex(id), to);
     return id;
+  }
+
+  /** File or image split into fragments flooded across the mesh (public, or sealed for `to`). Returns the object id. */
+  sendFile(file: Attachment, to?: string, expirySeconds = FILE_EXPIRY_S): Uint8Array {
+    if (file.data.length > MAX_ATTACHMENT) throw new Error('attachment too large');
+    let blob: Uint8Array = encodeBlob(file);
+    let dst: Uint8Array = BROADCAST;
+    let flags = Flags.SIGNED | Flags.STORE_FORWARD;
+    if (to !== undefined) {
+      const peer = this.peers.get(to);
+      if (!peer) throw new Error('unknown peer: no public key');
+      blob = seal(peer.xPub, blob);
+      dst = peer.peerId;
+      flags |= Flags.ENCRYPTED;
+    }
+    const objId = randomBytes(ID_LEN);
+    if (to !== undefined) {
+      this.awaitingAck.set(toHex(objId), to);
+      this.awaitingRead.set(toHex(objId), to);
+    }
+    const total = Math.max(1, Math.ceil(blob.length / FRAG_SIZE));
+    for (let i = 0; i < total; i++) {
+      const head = new Uint8Array(FRAG_HEADER);
+      head.set(objId);
+      new DataView(head.buffer).setUint16(ID_LEN, i);
+      new DataView(head.buffer).setUint16(ID_LEN + 2, total);
+      this.emit(PacketType.FRAG, dst, concat(head, blob.slice(i * FRAG_SIZE, (i + 1) * FRAG_SIZE)), flags, expirySeconds);
+    }
+    return objId;
   }
 
   /** Tells `to` that the given messages (hex msgIds, as delivered in ChatMessage.id) were read. */
@@ -257,6 +325,7 @@ export class ChaxNode {
         break;
       case PacketType.ACK:
         this.store.remove(p.payload.slice(0, ID_LEN));
+        this.purgeFragments(p.payload.slice(0, ID_LEN), p.src);
         {
           const acked = toHex(p.payload.slice(0, ID_LEN));
           if (this.awaitingAck.get(acked) === srcHex) {
@@ -274,6 +343,15 @@ export class ChaxNode {
             if (this.awaitingAck.delete(id)) this.deliveredHandlers.forEach((h) => h(id)); // read implies delivered
             this.readHandlers.forEach((h) => h(id));
           }
+          return; // unicast ends here
+        }
+        if (p.flags & Flags.STORE_FORWARD) this.store.put(p, this.clock.now());
+        break;
+      case PacketType.FRAG:
+        if (isBroadcast(p.dst)) {
+          this.collect(p);
+        } else if (equal(p.dst, this.identity.peerId)) {
+          this.collect(p);
           return; // unicast ends here
         }
         if (p.flags & Flags.STORE_FORWARD) this.store.put(p, this.clock.now());
@@ -308,6 +386,65 @@ export class ChaxNode {
       .filter((q) => !have.has(toHex(q.msgId)))
       .sort((a, b) => Number(b.type === PacketType.ANNOUNCE) - Number(a.type === PacketType.ANNOUNCE));
     for (const q of missing) this.transport.send(link, encode({ ...q, ttl: Math.min(q.ttl, SYNC_TTL) }));
+  }
+
+  /** Drops relay copies of the fragments of an acknowledged object. */
+  private purgeFragments(objId: Uint8Array, recipient: Uint8Array): void {
+    for (const q of this.store.all(this.clock.now())) {
+      if (q.type === PacketType.FRAG && equal(q.dst, recipient) && equal(q.payload.slice(0, ID_LEN), objId)) {
+        this.store.remove(q.msgId);
+      }
+    }
+  }
+
+  private collect(p: Packet): void {
+    if (p.payload.length < FRAG_HEADER) return;
+    const objId = p.payload.slice(0, ID_LEN);
+    const hex = toHex(objId);
+    if (this.finished.has(hex)) return;
+    const dv = new DataView(p.payload.buffer, p.payload.byteOffset, p.payload.byteLength);
+    const index = dv.getUint16(ID_LEN);
+    const total = dv.getUint16(ID_LEN + 2);
+    if (total < 1 || total > MAX_FRAGS || index >= total) return;
+    const now = this.clock.now();
+    let a = this.assemblies.get(hex);
+    if (!a) {
+      for (const [k, x] of this.assemblies) if (now - x.startedAt > ASSEMBLY_TTL_MS) this.assemblies.delete(k);
+      if (this.assemblies.size >= MAX_ASSEMBLIES) this.assemblies.delete(this.assemblies.keys().next().value!);
+      a = { from: toHex(p.src), direct: !isBroadcast(p.dst), total, parts: new Map(), timestamp: p.timestamp, startedAt: now };
+      this.assemblies.set(hex, a);
+    }
+    // One object, one sender, one fragment count.
+    if (a.total !== total || a.from !== toHex(p.src)) return;
+    a.parts.set(index, p.payload.slice(FRAG_HEADER));
+    this.transferHandlers.forEach((h) => h({ id: hex, from: a.from, direct: a.direct, received: a.parts.size, total }));
+    if (a.parts.size < total) return;
+
+    this.assemblies.delete(hex);
+    const blob = concat(...Array.from({ length: total }, (_, i) => a.parts.get(i)!));
+    const plain = a.direct ? open(this.identity, blob) : blob;
+    const file = plain && decodeBlob(plain);
+    if (!file) return;
+    this.finished.add(hex);
+    if (this.finished.size > 500) this.finished.delete(this.finished.values().next().value!);
+    const srcHex = a.from;
+    this.handlers.forEach((h) =>
+      h({
+        id: hex,
+        from: srcHex,
+        nickname: this.peers.get(srcHex)?.nickname,
+        text: '',
+        attachment: file,
+        direct: a.direct,
+        alert: false,
+        timestamp: a.timestamp,
+      }),
+    );
+    if (a.direct) {
+      const ack = this.build(PacketType.ACK, p.src, objId, Flags.SIGNED, 0);
+      this.markSeen(toHex(ack.msgId));
+      this.forward(ack, undefined, 0);
+    }
   }
 
   private sendAck(orig: Packet): void {
@@ -361,3 +498,25 @@ function utf8(s: string): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
+
+/** [mimeLen, mime, nameLen(2), name, data] */
+function encodeBlob(f: Attachment): Uint8Array {
+  const mime = utf8(f.mime).slice(0, 255);
+  const name = utf8(f.name).slice(0, 1000);
+  const head = new Uint8Array(1 + mime.length + 2);
+  head[0] = mime.length;
+  head.set(mime, 1);
+  new DataView(head.buffer).setUint16(1 + mime.length, name.length);
+  return concat(head, name, f.data);
+}
+
+function decodeBlob(b: Uint8Array): Attachment | undefined {
+  if (b.length < 3) return undefined;
+  const ml = b[0]!;
+  if (b.length < 1 + ml + 2) return undefined;
+  const nl = new DataView(b.buffer, b.byteOffset, b.byteLength).getUint16(1 + ml);
+  const o = 1 + ml + 2;
+  if (b.length < o + nl) return undefined;
+  const dec = new TextDecoder();
+  return { mime: dec.decode(b.slice(1, 1 + ml)), name: dec.decode(b.slice(o, o + nl)), data: b.slice(o + nl) };
+}

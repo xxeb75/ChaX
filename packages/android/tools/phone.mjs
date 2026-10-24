@@ -5,8 +5,17 @@ import WebSocket from 'ws';
 
 const PKG = 'app.chax.mesh';
 
+// Another adb (version 40, started by the desktop app) can restart the server under us: retry.
 function adb(serial, ...args) {
-  return execFileSync('adb', ['-s', serial, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  for (let i = 0; ; i++) {
+    try {
+      return execFileSync(process.env.ADB ?? 'adb', ['-s', serial, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    } catch (e) {
+      const msg = String(e.stderr ?? '');
+      if (i >= 8 || !/doesn't match|unknown host service|not found|offline/.test(msg)) throw e;
+      execFileSync('node', ['-e', 'setTimeout(()=>{},1500)']);
+    }
+  }
 }
 
 export class Phone {
@@ -42,6 +51,10 @@ export class Phone {
     await new Promise((res, rej) => {
       this.ws.on('open', res);
       this.ws.on('error', rej);
+    });
+    this.ws.on('close', () => {
+      for (const cb of this.pending.values()) cb({ result: { exceptionDetails: { exception: { description: `${this.name}: devtools socket closed` } } } });
+      this.pending.clear();
     });
     this.ws.on('message', (raw) => {
       const m = JSON.parse(raw.toString());

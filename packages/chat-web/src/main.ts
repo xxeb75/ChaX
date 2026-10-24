@@ -2,6 +2,7 @@ import {
   BleTransport,
   BroadcastChannelTransport,
   ChaxNode,
+  MAX_ATTACHMENT,
   PacketType,
   WebSocketTransport,
   createIdentity,
@@ -25,6 +26,15 @@ interface Line {
   alert?: boolean;
   status?: Status; // our own direct messages
   readSent?: boolean; // a received direct message we already acknowledged as read
+  file?: { name: string; mime: string; size: number }; // bytes live in IndexedDB under `id`
+}
+
+interface Incoming {
+  key: string;
+  label: string;
+  received: number;
+  total: number;
+  at: number;
 }
 
 const PUBLIC = 'public';
@@ -65,6 +75,69 @@ function loadIdentity(): Identity {
   return id;
 }
 
+// ---- attachments: bytes in IndexedDB, only metadata in the history ---------------------
+
+const IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+const MAX_SIDE = 1024;
+let dbp: Promise<IDBDatabase> | undefined;
+const urls = new Map<string, string>();
+
+function db(): Promise<IDBDatabase> {
+  dbp ??= new Promise((res, rej) => {
+    const r = indexedDB.open('chax-files', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('f');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+  return dbp;
+}
+async function idb<T>(mode: IDBTransactionMode, run: (s: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+  const d = await db();
+  return new Promise((res, rej) => {
+    const r = run(d.transaction('f', mode).objectStore('f'));
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+const putFile = (id: string, b: Blob) => idb('readwrite', (s) => s.put(b, id)).catch(() => undefined);
+const dropFile = (id: string) => {
+  const u = urls.get(id);
+  if (u) URL.revokeObjectURL(u);
+  urls.delete(id);
+  return idb('readwrite', (s) => s.delete(id)).catch(() => undefined);
+};
+async function fileUrl(id: string): Promise<string | undefined> {
+  const known = urls.get(id);
+  if (known) return known;
+  const b = (await idb<Blob | undefined>('readonly', (s) => s.get(id)).catch(() => undefined)) as Blob | undefined;
+  if (!b) return undefined;
+  const u = URL.createObjectURL(b);
+  urls.set(id, u);
+  return u;
+}
+
+const isImage = (mime: string) => IMAGE_MIMES.has(mime);
+function size(n: number): string {
+  return n < 1024 ? `${n} o` : n < 1024 * 1024 ? `${Math.round(n / 1024)} Ko` : `${(n / 1024 / 1024).toFixed(1)} Mo`;
+}
+
+/** Downscales a photo so it crosses a Bluetooth mesh in seconds, not minutes. */
+async function shrink(f: Blob): Promise<Blob> {
+  const bmp = await createImageBitmap(f);
+  const k = Math.min(1, MAX_SIDE / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(bmp.width * k));
+  c.height = Math.max(1, Math.round(bmp.height * k));
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#fff';
+  g.fillRect(0, 0, c.width, c.height);
+  g.drawImage(bmp, 0, 0, c.width, c.height);
+  bmp.close();
+  const out = await new Promise<Blob | null>((r) => c.toBlob(r, 'image/jpeg', 0.6));
+  if (!out) throw new Error('encode failed');
+  return out;
+}
+
 // ---- state ---------------------------------------------------------------------
 
 const history: Record<string, Line[]> = load('chax.history') ?? {};
@@ -72,6 +145,7 @@ for (const list of Object.values(history)) {
   for (const l of list) if ((l.status as string) === 'sent') l.status = 'transit'; // older builds
 }
 const unread: Record<string, number> = {};
+const incoming = new Map<string, Incoming>(); // object id -> transfer in progress
 const names = new Map<string, string>(Object.entries(load<Record<string, string>>('chax.names') ?? {}));
 let current = PUBLIC;
 let cursor = PUBLIC; // keyboard cursor in the list
@@ -133,7 +207,10 @@ function flash(msg: string): void {
 function push(conv: string, line: Line): void {
   const list = (history[conv] ??= []);
   list.push(line);
-  if (list.length > 200) list.shift();
+  if (list.length > 200) {
+    const old = list.shift()!;
+    if (old.file && old.id) void dropFile(old.id);
+  }
   persist();
   const seen = conv === current && viewing();
   if (conv === current) renderChat(line.mine);
@@ -291,7 +368,7 @@ function rowEl(r: Row, i: number, selected: boolean): HTMLButtonElement {
 
   if (tier === 0 && r.last) {
     const who = r.last.mine ? 'vous' : r.last.from;
-    b.append(span('pv', `${who} › ${r.last.text.replace(/\s+/g, ' ')}`));
+    b.append(span('pv', `${who} › ${r.last.file ? (isImage(r.last.file.mime) ? 'photo' : r.last.file.name) : r.last.text.replace(/\s+/g, ' ')}`));
   }
   b.onclick = () => open(r.k);
   return b;
@@ -374,6 +451,7 @@ function composer(): void {
   const input = $<HTMLTextAreaElement>('text');
   input.placeholder = alert ? 'lieu, danger, besoin : bref et précis' : current === PUBLIC ? 'écrire au mesh' : `écrire à ${labelOf(current)}`;
   $('sendLbl').textContent = alert ? "diffuser l'alerte" : 'envoyer';
+  $('attach').classList.toggle('hide', alert);
   const hint = $('hint');
   hint.replaceChildren();
   hint.append(
@@ -418,12 +496,22 @@ function renderChat(forceBottom = false): void {
     const m = el('div', `msg t${tier} ${l.mine ? 'mine' : 'theirs'}${l.alert ? ' alert' : ''}${cont ? ' cont' : ''}`);
     if (l.alert) m.append(span('who', `alerte · ${l.mine ? 'vous' : l.from} · ${clock(l.at)}`));
     else if (!cont) m.append(span('who', `${l.mine ? 'vous' : l.from} · ${clock(l.at)}`));
-    m.append(span('txt', l.text));
+    if (l.file) m.append(fileEl(l));
+    else m.append(span('txt', l.text));
     const st = statusOf(l);
     if (st && (st !== 'read' || l === lastRead)) m.append(statusEl(st));
     log.append(m);
     prev = l;
   });
+
+  for (const [id, t] of incoming) {
+    if (Date.now() - t.at > 120_000) incoming.delete(id);
+    else if (t.key === current) {
+      const x = el('div', 'xfer');
+      x.append(span('', `${t.label} › réception`), span('fill', ''), span('tnum', `${Math.round((t.received / t.total) * 100)} %`));
+      log.append(x);
+    }
+  }
 
   if (forceBottom || stick || nearBottom) {
     box.scrollTop = box.scrollHeight;
@@ -431,6 +519,66 @@ function renderChat(forceBottom = false): void {
   } else {
     $('jump').classList.remove('hide');
   }
+}
+
+function fileEl(l: Line): HTMLElement {
+  const f = l.file!;
+  if (isImage(f.mime)) {
+    const b = el('button', 'img');
+    b.type = 'button';
+    b.setAttribute('aria-label', `Ouvrir la photo ${f.name}`);
+    const img = el('img');
+    img.alt = f.name;
+    img.decoding = 'async';
+    img.onload = () => {
+      if (stick) $('msgs').scrollTop = $('msgs').scrollHeight;
+    };
+    void fileUrl(l.id!).then((u) => {
+      if (u) img.src = u;
+      else b.replaceWith(span('txt', `${f.name} · fichier introuvable`));
+    });
+    b.onclick = () => lightbox(l.id!, f.name);
+    b.append(img);
+    return b;
+  }
+  const b = el('button', 'file');
+  b.type = 'button';
+  b.append(span('nm', f.name), span('fill', ''), span('act', `${size(f.size)} · enregistrer ›`));
+  b.onclick = async () => {
+    const u = await fileUrl(l.id!);
+    if (!u) return flash('fichier introuvable');
+    const a = el('a');
+    a.href = u;
+    a.download = f.name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_') || 'fichier';
+    a.click();
+  };
+  return b;
+}
+
+function lightbox(id: string, name: string): void {
+  void fileUrl(id).then((u) => {
+    if (!u) return;
+    const o = el('div', 'lightbox');
+    o.setAttribute('role', 'dialog');
+    o.setAttribute('aria-label', name);
+    const img = el('img');
+    img.src = u;
+    img.alt = name;
+    o.append(img);
+    const close = () => {
+      o.remove();
+      document.removeEventListener('keydown', onKey, true);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        close();
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+    o.onclick = close;
+    document.body.append(o);
+  });
 }
 
 $('msgs').addEventListener('scroll', () => {
@@ -485,6 +633,58 @@ function submit(): void {
   syncSend();
   stick = true;
 }
+
+async function attach(f: File): Promise<void> {
+  if (current === ALERTS) return flash('les alertes sont du texte');
+  let blob: Blob = f;
+  let mime = f.type || 'application/octet-stream';
+  let name = f.name || 'fichier';
+  if (isImage(mime) && mime !== 'image/gif') {
+    try {
+      const small = await shrink(f);
+      if (small.size < f.size || f.size > MAX_ATTACHMENT - 4096) {
+        blob = small;
+        mime = 'image/jpeg';
+        name = `${name.replace(/\.[^.]+$/, '')}.jpg`;
+      }
+    } catch {
+      /* keep the original */
+    }
+  }
+  if (blob.size > MAX_ATTACHMENT - 4096) return flash('trop gros : 2 Mo maximum');
+  const key = current;
+  const data = new Uint8Array(await blob.arrayBuffer());
+  let id: string;
+  try {
+    id = toHex(key === PUBLIC ? node.sendFile({ name, mime, data }) : node.sendFile({ name, mime, data }, key));
+  } catch {
+    return flash('clé inconnue, réessayez');
+  }
+  await putFile(id, new Blob([data], { type: isImage(mime) ? mime : 'application/octet-stream' }));
+  const line: Line = { id, mine: true, from: node.nickname, text: '', at: Date.now(), file: { name, mime, size: data.length } };
+  if (key !== PUBLIC) line.status = node.neighbors.size ? 'transit' : 'pending';
+  push(key, line);
+  stick = true;
+}
+
+$('attach').onclick = () => $<HTMLInputElement>('pick').click();
+$('pick').addEventListener('change', () => {
+  const input = $<HTMLInputElement>('pick');
+  for (const f of Array.from(input.files ?? [])) void attach(f);
+  input.value = '';
+});
+$('text').addEventListener('paste', (ev) => {
+  const f = Array.from((ev as ClipboardEvent).clipboardData?.files ?? [])[0];
+  if (f) {
+    ev.preventDefault();
+    void attach(f);
+  }
+});
+$('chat').addEventListener('dragover', (ev) => ev.preventDefault());
+$('chat').addEventListener('drop', (ev) => {
+  ev.preventDefault();
+  for (const f of Array.from((ev as DragEvent).dataTransfer?.files ?? [])) void attach(f);
+});
 
 $('composer').onsubmit = (ev) => {
   ev.preventDefault();
@@ -615,9 +815,26 @@ function start(nickname: string): void {
     const who = m.nickname || m.from.slice(0, 8);
     console.info('[chax] message', m.direct ? 'direct' : m.alert ? 'alert' : 'public', who);
     const line: Line = { id: m.id, mine: false, from: who, text: m.text, at: Date.now() };
-    if (m.alert) push(ALERTS, { ...line, alert: true });
-    else if (m.direct) push(m.from, line);
-    else push(PUBLIC, line);
+    const key = m.alert ? ALERTS : m.direct ? m.from : PUBLIC;
+    if (m.attachment) {
+      incoming.delete(m.id);
+      const a = m.attachment;
+      const safe = isImage(a.mime);
+      line.file = { name: a.name || 'fichier', mime: safe ? a.mime : 'application/octet-stream', size: a.data.length };
+      void putFile(m.id, new Blob([a.data as BlobPart], { type: line.file.mime })).then(() => push(key, line));
+      return;
+    }
+    push(key, m.alert ? { ...line, alert: true } : line);
+  });
+  node.onTransfer((t) => {
+    incoming.set(t.id, {
+      key: t.direct ? t.from : PUBLIC,
+      label: node.peers.get(t.from)?.nickname || t.from.slice(0, 8),
+      received: t.received,
+      total: t.total,
+      at: Date.now(),
+    });
+    if ((t.direct ? t.from : PUBLIC) === current) renderChat();
   });
   const mark = (status: Status) => (id: string) => {
     for (const k of Object.keys(history)) setStatus(k, id, status);
@@ -647,6 +864,7 @@ function start(nickname: string): void {
     sendReceipts();
     // pending -> in transit as soon as a neighbour shows up
     if (isPeerKey(current) && (history[current] ?? []).some((l) => l.status === 'pending')) renderChat();
+    else if (incoming.size) renderChat();
   }, 1000);
 
   $('app').dataset.view = wide() ? 'chat' : 'list';

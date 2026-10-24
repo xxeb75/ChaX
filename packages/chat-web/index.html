@@ -156,6 +156,18 @@
     .sendBtn:not(:disabled):hover { color: var(--amber); }
     .sendBtn:disabled { cursor: default; }
     .composer.alert .sendBtn:not(:disabled) { background: var(--ivory); color: var(--void); padding: 0 14px; }
+    .attach { min-height: 48px; min-width: 40px; padding: 0 8px; color: var(--dust-3); font-size: var(--fs-front); text-align: center; transition: color .15s; }
+    .attach:hover { color: var(--amber); }
+    .msg .img { display: block; padding: 0; margin-top: 4px; max-width: 100%; }
+    .msg .img img { display: block; max-width: 100%; max-height: 300px; min-height: 48px; background: var(--void-2); }
+    .msg.mine .img { align-self: flex-end; }
+    .msg .file { display: flex; gap: 10px; align-items: baseline; width: min(420px, 78vw); min-height: 48px; color: inherit; }
+    .msg .file .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; min-width: 0; }
+    .msg .file .act { color: var(--dust-3); font-size: var(--fs-rear); flex: none; }
+    .msg .file:hover .act { color: var(--amber); }
+    .xfer { display: flex; gap: 10px; align-items: baseline; font-size: var(--fs-rear); color: var(--dust-3); margin-top: 10px; max-width: min(420px, 86%); }
+    .lightbox { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: rgba(10, 10, 12, .94); cursor: zoom-out; padding: var(--top) 12px var(--bottom); }
+    .lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
     .composer .hint { margin: 0; font-size: var(--fs-dust); color: var(--dust-3); min-height: 18px; }
     @media (hover: none) { .composer .hint .kb { display: none; } }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
@@ -218,6 +230,8 @@
           <span class="car" aria-hidden="true">›</span>
           <label for="text" class="sr">Votre message</label>
           <textarea id="text" rows="1" enterkeyhint="send"></textarea>
+          <button class="attach" id="attach" type="button" aria-label="Joindre une photo ou un fichier">+</button>
+          <input id="pick" class="hide" type="file" multiple tabindex="-1" aria-hidden="true" />
           <button class="sendBtn" id="sendBtn" type="submit" disabled><span id="sendLbl">envoyer</span> ›</button>
         </div>
         <p class="hint" id="hint"></p>

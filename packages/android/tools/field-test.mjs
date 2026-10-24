@@ -57,12 +57,12 @@ check('2. message public reçu', !!gotPublic);
 await sleep(1500);
 await a.eval(ui.open(nameB));
 await a.eval(ui.say('privé A vers B'));
-const delivered = await until(async () => (await a.eval(ui.statuses)).some((s) => /remis|lu/.test(s)), 20000);
+const delivered = await until(async () => /remis|lu/.test((await a.eval(ui.statuses)).slice(-1)[0] ?? ''), 20000);
 check('3. message privé : "remis" apparaît chez l’émetteur', !!delivered, JSON.stringify(await a.eval(ui.statuses)));
 
 // 4. read receipt: B opens the conversation
 await b.eval(ui.open(nameA));
-const read = await until(async () => (await a.eval(ui.statuses)).some((s) => /lu/.test(s)), 20000);
+const read = await until(async () => /lu/.test((await a.eval(ui.statuses)).slice(-1)[0] ?? ''), 20000);
 check('4. accusé de lecture : "lu" apparaît quand B ouvre la conversation', !!read, JSON.stringify(await a.eval(ui.statuses)));
 
 // 5. B in the background with the screen off: it must keep receiving and acknowledging
@@ -96,6 +96,37 @@ const late = await until(async () => {
   return /remis|lu/.test(st[st.length - 1] ?? '');
 }, 40000);
 check('6d. le message en attente est livré après le retour', !!late, JSON.stringify(await a.eval(ui.statuses)));
+
+// 7. attachments: a generated photo (downscaled and fragmented) and a 300 KB file, B -> A over BLE
+const sendFile = (name, mime, bytes, kind) => `(async () => {
+  let f;
+  if (${JSON.stringify(kind)} === 'photo') {
+    const c = document.createElement('canvas'); c.width = 2000; c.height = 1500;
+    const g = c.getContext('2d');
+    const gr = g.createLinearGradient(0, 0, 2000, 1500); gr.addColorStop(0, '#ffb000'); gr.addColorStop(1, '#223'); g.fillStyle = gr; g.fillRect(0, 0, 2000, 1500); for (let i = 0; i < 120; i++) { g.fillStyle = 'hsl(' + Math.random() * 360 + ',60%,50%)'; g.beginPath(); g.arc(Math.random() * 2000, Math.random() * 1500, 20 + Math.random() * 120, 0, 7); g.fill(); }
+    f = new File([await new Promise((r) => c.toBlob(r, 'image/png'))], ${JSON.stringify(name)}, { type: ${JSON.stringify(mime)} });
+  } else {
+    f = new File([new Uint8Array(${bytes}).map((_, i) => i % 251)], ${JSON.stringify(name)}, { type: ${JSON.stringify(mime)} });
+  }
+  const dt = new DataTransfer(); dt.items.add(f);
+  const inp = document.getElementById('pick'); inp.files = dt.files; inp.dispatchEvent(new Event('change'));
+  return true;
+})()`;
+await b.eval(ui.open(nameA));
+const t0 = Date.now();
+await b.eval(sendFile('terrain.png', 'image/png', 0, 'photo'));
+const imgs0 = await a.eval(`document.querySelectorAll('#log .img img').length`);
+const files0 = await a.eval(`document.querySelectorAll('#log .file').length`);
+const gotPhoto = await until(async () => (await a.eval(`document.querySelectorAll('#log .img img').length`)) > imgs0, 90000, 1000);
+check('7a. photo reçue en Bluetooth', !!gotPhoto, `${((Date.now() - t0) / 1000).toFixed(1)} s`);
+const dim = await a.eval(`(() => { const i = document.querySelector('#log .img img:last-of-type'); return i ? i.naturalWidth + 'x' + i.naturalHeight : ''; })()`).catch(() => '');
+check('7b. photo décodable côté récepteur', /^\d+x\d+$/.test(dim) && !dim.startsWith('0'), dim);
+const t1 = Date.now();
+await b.eval(sendFile('rapport.pdf', 'application/pdf', 300000, 'file'));
+const gotFile = await until(async () => (await a.eval(`document.querySelectorAll('#log .file').length`)) > files0, 120000, 1000);
+check('7c. fichier de 300 Ko reçu', !!gotFile, `${((Date.now() - t1) / 1000).toFixed(1)} s`);
+const ackd = await until(async () => /remis|lu/.test((await b.eval(ui.statuses)).slice(-1)[0] ?? ''), 20000);
+check('7d. l’émetteur voit « remis » pour le fichier', !!ackd, JSON.stringify(await b.eval(ui.statuses)));
 
 a.close();
 b.close();

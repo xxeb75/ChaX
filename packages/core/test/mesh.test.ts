@@ -349,4 +349,77 @@ describe('store-and-forward', () => {
     r.net.run(1000);
     expect(r.inbox[2]!.map((m) => [m.text, m.alert])).toEqual([['Evacuation zone nord', true]]);
   });
+
+  describe('attachments', () => {
+    const photo = (n: number) => ({ name: 'photo.jpg', mime: 'image/jpeg', data: Uint8Array.from({ length: n }, (_, i) => (i * 31 + 7) & 255) });
+
+    it('splits a file into fragments and reassembles it across relays', () => {
+      const r = rig(3);
+      chain(r);
+      r.net.run(1000);
+      const [a, , c] = r.nodes as [ChaxNode, ChaxNode, ChaxNode];
+      const f = photo(60_000);
+      a.sendFile(f);
+      r.net.run(3000);
+      for (const box of [r.inbox[1]!, r.inbox[2]!]) {
+        expect(box).toHaveLength(1);
+        expect(box[0]!.attachment?.name).toBe('photo.jpg');
+        expect(box[0]!.attachment?.mime).toBe('image/jpeg');
+        expect(Array.from(box[0]!.attachment!.data)).toEqual(Array.from(f.data));
+      }
+      expect(c.peerId).not.toBe(a.peerId);
+    });
+
+    it('seals a direct file, delivers it once, acknowledges it and purges relay copies', () => {
+      const r = rig(3);
+      chain(r);
+      r.net.run(1000);
+      const [a, b, c] = r.nodes as [ChaxNode, ChaxNode, ChaxNode];
+      const delivered: string[] = [];
+      const read: string[] = [];
+      a.onDelivered((id) => delivered.push(id));
+      a.onRead((id) => read.push(id));
+      const f = photo(30_000);
+      const id = a.sendFile(f, c.peerId);
+      r.net.run(3000);
+      expect(r.inbox[1]).toHaveLength(0); // the relay cannot read it
+      expect(r.inbox[2]).toHaveLength(1);
+      expect(r.inbox[2]![0]!.id).toBe(toHex(id));
+      expect(r.inbox[2]![0]!.direct).toBe(true);
+      expect(Array.from(r.inbox[2]![0]!.attachment!.data)).toEqual(Array.from(f.data));
+      expect(delivered).toEqual([toHex(id)]);
+      expect(b.store.all(r.net.now()).some((p) => p.type === PacketType.FRAG)).toBe(false);
+      c.sendRead(a.peerId, [r.inbox[2]![0]!.id]);
+      r.net.run(500);
+      expect(read).toEqual([toHex(id)]);
+    });
+
+    it('completes a transfer interrupted by a lost link once the carrier meets the recipient', () => {
+      const r = rig(3);
+      chain(r);
+      r.net.run(1000);
+      const [a, , c] = r.nodes as [ChaxNode, ChaxNode, ChaxNode];
+      r.net.unlink('n1', 'n2');
+      a.sendFile(photo(40_000), c.peerId);
+      r.net.run(2000);
+      expect(r.inbox[2]).toHaveLength(0);
+      r.net.link('n1', 'n2');
+      r.net.run(3000);
+      expect(r.inbox[2]).toHaveLength(1);
+    });
+
+    it('reports progress and rejects oversized or inconsistent fragments', () => {
+      const r = rig(2);
+      r.net.link('n0', 'n1');
+      r.net.run(1000);
+      const [a, b] = r.nodes as [ChaxNode, ChaxNode];
+      const seen: number[] = [];
+      b.onTransfer((t) => seen.push(t.received / t.total));
+      a.sendFile(photo(30_000));
+      r.net.run(2000);
+      expect(seen.length).toBeGreaterThan(1);
+      expect(seen[seen.length - 1]).toBe(1);
+      expect(() => a.sendFile(photo(3 * 1024 * 1024))).toThrow();
+    });
+  });
 });

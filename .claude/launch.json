@@ -30,6 +30,16 @@
         "127.0.0.1"
       ],
       "port": 5174
+    },
+    {
+      "name": "relay",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "packages/relay",
+        "start"
+      ],
+      "port": 8787
     }
   ]
 }

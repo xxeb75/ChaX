@@ -1,4 +1,4 @@
-import { concat, equal, randomBytes, toHex } from './bytes';
+import { concat, equal, fromHex, randomBytes, toHex } from './bytes';
 import { createIdentity, open, peerIdOf, seal, sign, verify, type Identity } from './crypto';
 import {
   BROADCAST,
@@ -23,6 +23,7 @@ const MAX_SEEN = 20000;
 const RELAY_JITTER_MS = 40;
 
 export interface ChatMessage {
+  id: string; // hex msgId
   from: string; // hex peerId
   nickname?: string;
   text: string;
@@ -61,6 +62,8 @@ export class ChaxNode {
   private readonly pendingRelay = new Map<string, () => void>();
   private handlers: ((m: ChatMessage) => void)[] = [];
   private deliveredHandlers: ((msgId: string) => void)[] = [];
+  private readHandlers: ((msgId: string) => void)[] = [];
+  private awaitingRead = new Map<string, string>(); // msgId hex -> recipient peerId hex
   private awaitingAck = new Map<string, string>(); // msgId hex -> recipient peerId hex
 
   constructor(opts: NodeOptions) {
@@ -86,6 +89,11 @@ export class ChaxNode {
   /** Called with the hex msgId of a direct message once its recipient has acknowledged it. */
   onDelivered(cb: (msgId: string) => void): void {
     this.deliveredHandlers.push(cb);
+  }
+
+  /** Called with the hex msgId of a direct message once its recipient has read it. */
+  onRead(cb: (msgId: string) => void): void {
+    this.readHandlers.push(cb);
   }
 
   // ---- sending -------------------------------------------------------
@@ -122,7 +130,21 @@ export class ChaxNode {
       expirySeconds,
     );
     this.awaitingAck.set(toHex(id), to);
+    this.awaitingRead.set(toHex(id), to);
     return id;
+  }
+
+  /** Tells `to` that the given messages (hex msgIds, as delivered in ChatMessage.id) were read. */
+  sendRead(to: string, msgIds: string[]): void {
+    const peer = this.peers.get(to);
+    if (!peer || msgIds.length === 0) return;
+    this.emit(
+      PacketType.READ,
+      peer.peerId,
+      concat(...msgIds.map(fromHex)),
+      Flags.SIGNED | Flags.STORE_FORWARD,
+      24 * 3600,
+    );
   }
 
   private announcePayload(): Uint8Array {
@@ -243,6 +265,19 @@ export class ChaxNode {
           }
         }
         break;
+      case PacketType.READ:
+        if (equal(p.dst, this.identity.peerId)) {
+          for (let i = 0; i + ID_LEN <= p.payload.length; i += ID_LEN) {
+            const id = toHex(p.payload.slice(i, i + ID_LEN));
+            if (this.awaitingRead.get(id) !== srcHex) continue;
+            this.awaitingRead.delete(id);
+            if (this.awaitingAck.delete(id)) this.deliveredHandlers.forEach((h) => h(id)); // read implies delivered
+            this.readHandlers.forEach((h) => h(id));
+          }
+          return; // unicast ends here
+        }
+        if (p.flags & Flags.STORE_FORWARD) this.store.put(p, this.clock.now());
+        break;
       case PacketType.MSG:
       case PacketType.ALERT:
         if (isBroadcast(p.dst)) {
@@ -284,6 +319,7 @@ export class ChaxNode {
   private deliver(p: Packet, plain: Uint8Array, direct: boolean): void {
     const srcHex = toHex(p.src);
     const msg: ChatMessage = {
+      id: toHex(p.msgId),
       from: srcHex,
       nickname: this.peers.get(srcHex)?.nickname,
       text: new TextDecoder().decode(plain),

@@ -13,6 +13,7 @@ export enum PacketType {
   FRAG = 4,
   SYNC = 5,
   ALERT = 6,
+  READ = 7,
 }
 
 export const Flags = {

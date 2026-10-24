@@ -266,6 +266,45 @@ describe('store-and-forward', () => {
     expect(delivered).toEqual([toHex(id)]);
   });
 
+  it('tells the sender when the recipient has read a message, even if they meet later', () => {
+    const r = rig(3);
+    chain(r);
+    r.net.run(1000);
+    const [a, b, c] = r.nodes as [ChaxNode, ChaxNode, ChaxNode];
+    const read: string[] = [];
+    a.onRead((id) => read.push(id));
+    const id = a.sendDirect(c.peerId, 'lis moi');
+    r.net.run(1000);
+    expect(read).toEqual([]); // delivered, not read yet
+    expect(r.inbox[2]![0]!.id).toBe(toHex(id));
+
+    // the recipient reads it while the sender is away: the receipt waits at the relay
+    r.net.isolate('n0');
+    r.net.run(100);
+    c.sendRead(a.peerId, [r.inbox[2]![0]!.id]);
+    r.net.run(500);
+    expect(read).toEqual([]);
+    expect(b.store.all(r.net.now()).some((p) => p.type === PacketType.READ)).toBe(true);
+
+    r.net.link('n0', 'n1');
+    r.net.run(1500);
+    expect(read).toEqual([toHex(id)]);
+  });
+
+  it('ignores a read receipt that does not come from the recipient', () => {
+    const r = rig(3);
+    chain(r);
+    r.net.run(1000);
+    const [a, b, c] = r.nodes as [ChaxNode, ChaxNode, ChaxNode];
+    const read: string[] = [];
+    a.onRead((id) => read.push(id));
+    const id = a.sendDirect(c.peerId, 'prive');
+    r.net.run(1000);
+    b.sendRead(a.peerId, [toHex(id)]); // B claims C read it
+    r.net.run(1000);
+    expect(read).toEqual([]);
+  });
+
   it('does not redeliver the same message on later meetings', () => {
     const r = rig(3);
     chain(r);

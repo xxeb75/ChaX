@@ -441,7 +441,7 @@ function header(): void {
     : current === PUBLIC
       ? 'visible par tout le mesh'
       : current === ALERTS
-        ? 'portées 24 h par les relais'
+        ? 'portées 24 h'
         : online.has(current)
           ? 'chiffré de bout en bout'
           : 'un relais portera vos messages';
@@ -452,7 +452,7 @@ function composer(): void {
   const alert = current === ALERTS;
   $('composer').classList.toggle('alert', alert);
   const input = $<HTMLTextAreaElement>('text');
-  input.placeholder = alert ? 'lieu, danger, besoin : bref et précis' : !wide() ? 'écrire…' : current === PUBLIC ? 'écrire au mesh' : `écrire à ${labelOf(current)}`;
+  input.placeholder = alert ? 'lieu, danger, besoin' : !wide() ? 'écrire…' : current === PUBLIC ? 'écrire au mesh' : `écrire à ${labelOf(current)}`;
   const sendLabel = alert ? "Diffuser l'alerte" : 'Envoyer';
   $('sendBtn').setAttribute('aria-label', sendLabel);
   $('sendBtn').title = sendLabel;
@@ -460,7 +460,7 @@ function composer(): void {
   const hint = $('hint');
   hint.replaceChildren();
   hint.append(
-    document.createTextNode(alert ? 'part chez tout le monde, y compris ceux qui arriveront plus tard' : isPeerKey(current) ? 'chiffré' : 'visible par tous'),
+    document.createTextNode(alert ? 'part chez tout le monde, même ceux qui arriveront plus tard' : isPeerKey(current) ? 'chiffré' : 'visible par tous'),
   );
   if (!alert) hint.append(span('kb', ' · entrée envoie, maj+entrée saute une ligne, coller ou déposer une image pour la joindre'));
   syncSend();

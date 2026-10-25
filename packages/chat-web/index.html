@@ -32,7 +32,7 @@
       --fs-front: 20px;
       --fs-mid: 16px;
       --fs-rear: 13px;
-      --fs-dust: 11px;
+      --fs-dust: 12px;
       --ease: cubic-bezier(.16, 1, .3, 1);
       --top: max(env(safe-area-inset-top), 12px);
       --bottom: max(env(safe-area-inset-bottom), 12px);
@@ -76,7 +76,7 @@
 
     /* ---- shell ---- */
     #app { height: 100dvh; display: grid; grid-template-columns: minmax(320px, 400px) minmax(0, 1fr); }
-    #side { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--dust-1); padding-top: var(--top); }
+    #side { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--dust-1); padding-top: var(--top); }
     .top { padding: 4px 20px 0; }
     .id { display: flex; align-items: baseline; gap: 12px; min-height: 44px; }
     .id .cat { flex: none; align-self: center; color: var(--ivory); }
@@ -228,7 +228,7 @@
 
     /* ---- phone: one pane at a time ---- */
     @media (max-width: 760px) {
-      #app { grid-template-columns: 1fr; }
+      #app { grid-template-columns: minmax(0, 1fr); }
       #app[data-view="list"] #chat, #app[data-view="chat"] #side { display: none; }
       #side { border-right: 0; }
       #back { display: grid; }
@@ -260,7 +260,7 @@
         <div class="id">
           <svg class="cat" viewBox="0 0 16 16" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M2 1.5 6 5h4l4-3.5V9c0 3.5-2.7 5.5-6 5.5S2 12.5 2 9z"/><path fill="#0a0a0c" d="M5 8h2v2H5zM9 8h2v2H9z"/></svg>
           <span class="wm" id="meName"></span>
-          <button class="fp" id="fp" type="button" aria-label="Ouvrir mon code pour me faire vérifier en personne"><span id="meFp"></span><span class="act" aria-hidden="true">vérifier ›</span></button>
+          <button class="fp" id="fp" type="button" aria-label="Ouvrir mon code pour me faire vérifier en personne"><span id="meFp"></span><span class="act" aria-hidden="true">mon code ›</span></button>
           <span id="flash" role="status" aria-live="polite"></span>
         </div>
         <div class="sondeLine"><span class="sonde" id="sonde" aria-hidden="true"></span><span id="meshTxt"></span><button id="netBtn" class="netBtn hide" type="button" aria-label="Repli par internet : réglages"></button></div>

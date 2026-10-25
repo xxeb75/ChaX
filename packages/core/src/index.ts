@@ -9,3 +9,5 @@ export * from './node';
 export * from './broadcast';
 export * from './websocket';
 export * from './ble';
+export * from './multi';
+export * from './nostr';

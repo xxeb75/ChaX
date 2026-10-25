@@ -1,5 +1,5 @@
-import { BleTransport, ChaxNode, type BleBridge, type ChatMessage } from '../../core/src';
-import { ALERTS, IMAGE_MIMES, MAX_LINES, PUBLIC, idb, load, loadIdentity, putFile, save, type Line, type Status } from './store';
+import { BleTransport, ChaxNode, DEFAULT_RELAYS, MultiTransport, NostrTransport, toHex, type BleBridge, type ChatMessage } from '../../core/src';
+import { ALERTS, IMAGE_MIMES, MAX_LINES, PUBLIC, idb, load, loadIdentity, loadNet, putFile, save, type Line, type Status } from './store';
 
 /**
  * The mesh node without a window. The Android foreground service loads this page in a WebView when the app is
@@ -47,7 +47,17 @@ function run(nickname: string): void {
   const names: Record<string, string> = load('chax.names') ?? {};
 
   const ble = new BleTransport(bridge());
-  const node = new ChaxNode({ transport: ble, identity: loadIdentity(), nickname });
+  const identity = loadIdentity();
+  const cfg = loadNet();
+  const net = new NostrTransport({ selfId: toHex(identity.peerId), relays: cfg.relays.length ? cfg.relays : DEFAULT_RELAYS });
+  const node = new ChaxNode({
+    transport: new MultiTransport([
+      { name: 'ble', transport: ble },
+      { name: 'net', transport: net },
+    ]),
+    identity,
+    nickname,
+  });
   node.loadSessions(load('chax.sessions') ?? {});
   // saved at once: this page can be destroyed the moment the user opens the app
   node.onSessionsChanged(() => save('chax.sessions', node.exportSessions()));
@@ -100,6 +110,10 @@ function run(nickname: string): void {
 
   ble.onError((m) => nat.log(`ble: ${m}`));
   void ble.start();
+  if (cfg.on) {
+    net.start();
+    setInterval(() => node.announce(), 5 * 60 * 1000); // keeps us visible to peers reached through the relays
+  }
   nat.log(`headless node up as ${nickname} ${node.peerId.slice(0, 8)}`);
 }
 

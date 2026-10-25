@@ -2,7 +2,10 @@ import {
   BleTransport,
   BroadcastChannelTransport,
   ChaxNode,
+  DEFAULT_RELAYS,
   MAX_ATTACHMENT,
+  MultiTransport,
+  NostrTransport,
   PacketType,
   WebSocketTransport,
   toHex,
@@ -11,7 +14,7 @@ import {
   type Transport,
 } from '../../core/src';
 import { encodeCode, parseCode, qrElement, scanCamera, type Trusted } from './verify';
-import { ALERTS, MAX_LINES, IMAGE_MIMES, PUBLIC, cap, idb, load, loadIdentity, native, putFile, save, type Line, type Status } from './store';
+import { ALERTS, MAX_LINES, IMAGE_MIMES, PUBLIC, cap, idb, load, loadIdentity, loadNet, native, putFile, save, type Line, type Status } from './store';
 
 interface Incoming {
   key: string;
@@ -86,6 +89,7 @@ let query = '';
 let node: ChaxNode;
 let relay: WebSocketTransport | undefined;
 let ble: BleTransport | undefined;
+let net: NostrTransport | undefined;
 let bleError = '';
 let stick = true;
 
@@ -128,6 +132,8 @@ function dayLabel(t: number): string {
 const spaced = (hex: string) => hex.replace(/(.{4})/g, '$1 ').trim();
 const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const neighborIds = () => new Set(node.neighbors.values());
+/** Neighbours reached by radio, as opposed to the ones only reachable through the internet relays. */
+const rangeIds = () => new Set([...node.neighbors].filter(([l]) => !l.startsWith('net|')).map(([, p]) => p));
 const isVerified = (k: string) => !!trust[k];
 /** Someone not verified who goes by the name of a contact we did verify: the classic impersonation. */
 const lookalike = (k: string) => isPeerKey(k) && !trust[k] && Object.entries(trust).some(([id, t]) => id !== k && t.name === names.get(k));
@@ -235,13 +241,23 @@ function renderSonde(): void {
       s.append(g);
     });
   }
-  const n = node.neighbors.size;
+  const range = rangeIds().size;
+  const viaNet = neighborIds().size - range;
+  const n = range + viaNet;
   const carried = node.store.all(Date.now()).filter((p) => p.type !== PacketType.ANNOUNCE).length;
   let txt: string;
   if (ble && bleError) txt = `bluetooth indisponible · ${bleError}`;
   else if (relay && !relay.connected) txt = 'relais injoignable · nouvelle tentative';
-  else if (n) txt = `${n} à portée${carried ? ` · ${carried} porté${carried > 1 ? 's' : ''}` : ''}`;
-  else txt = 'personne à portée';
+  else if (n) {
+    txt = [range ? `${range} à portée` : '', viaNet ? `${viaNet} par internet` : ''].filter(Boolean).join(' · ');
+    if (carried) txt += ` · ${carried} porté${carried > 1 ? 's' : ''}`;
+  } else txt = net?.running ? (net.connected ? 'personne · internet actif' : 'internet : connexion…') : 'personne à portée';
+  const nb = document.getElementById('netBtn');
+  if (nb) {
+    nb.classList.toggle('hide', !net);
+    const t = net?.running ? 'internet ●' : 'internet ›';
+    if (nb.textContent !== t) nb.textContent = t;
+  }
   if ($('meshTxt').textContent !== txt) $('meshTxt').textContent = txt;
 }
 
@@ -416,10 +432,10 @@ function header(): void {
   const left = fake
     ? span('warn', '⚠ porte le pseudo d’un contact vérifié')
     : current === PUBLIC
-      ? span('', `${node.neighbors.size} à portée`)
+      ? span('', rangeIds().size || !node.neighbors.size ? `${rangeIds().size} à portée${node.neighbors.size > rangeIds().size ? ` · ${node.neighbors.size - rangeIds().size} par internet` : ''}` : `${node.neighbors.size} par internet`)
       : current === ALERTS
         ? span('', 'signées · prioritaires')
-        : span(online.has(current) ? 'ivory' : '', online.has(current) ? 'à portée' : 'hors de portée');
+        : span(online.has(current) ? 'ivory' : '', online.has(current) ? (rangeIds().has(current) ? 'à portée' : 'par internet') : 'hors de portée');
   const right = fake
     ? ''
     : current === PUBLIC
@@ -617,6 +633,90 @@ function lightbox(id: string, name: string, bytes: number): void {
     document.body.append(o);
     x.focus();
   });
+}
+
+/** The internet fallback: what it is, what it costs in privacy, and the switch. */
+function netDialog(): void {
+  if (!net) return;
+  const back = document.activeElement as HTMLElement | null;
+  const o = el('div', 'lightbox verify');
+  o.setAttribute('role', 'dialog');
+  o.setAttribute('aria-modal', 'true');
+  o.setAttribute('aria-label', 'Repli par internet');
+  const bar = el('div', 'bar');
+  const x = el('button', undefined, 'fermer ×');
+  x.type = 'button';
+  bar.append(span('', 'repli par internet'), x);
+  const body = el('div', 'vbody');
+  const state = el('p', 'vres');
+  state.setAttribute('role', 'status');
+  const cfg = loadNet();
+  const draw = () => {
+    state.textContent = net!.running
+      ? net!.connected
+        ? `Actif : ${net!.connected} relais sur ${net!.relayCount}.`
+        : 'Actif, connexion aux relais…'
+      : 'Désactivé : seul le Bluetooth est utilisé.';
+    sw.textContent = net!.running ? 'désactiver ›' : 'activer ›';
+  };
+  const intro = el(
+    'p',
+    'vintro',
+    'Quand le Bluetooth ne porte plus, les messages peuvent passer par des relais Nostr publics. Le contenu reste chiffré de bout en bout (messages privés) et signé ; les relais voient seulement votre adresse IP, l’heure et la taille des paquets. Les messages du canal public, eux, sont lisibles par n’importe qui sur ces relais.',
+  );
+  const sw = el('button', undefined, '');
+  sw.type = 'button';
+  sw.onclick = () => {
+    if (net!.running) net!.stop();
+    else net!.start();
+    cfg.on = net!.running;
+    save('chax.net', cfg);
+    draw();
+    renderList();
+  };
+  const relays = el('textarea');
+  relays.rows = 3;
+  relays.spellcheck = false;
+  relays.value = (cfg.relays.length ? cfg.relays : DEFAULT_RELAYS).join('\n');
+  relays.setAttribute('aria-label', 'Adresses des relais, une par ligne');
+  relays.style.cssText = 'width:min(92vw,420px);font-size:var(--fs-dust);border-bottom:1px solid var(--dust-2);';
+  relays.onchange = () => {
+    const list = relays.value.split(/\s+/).filter((u) => /^wss:\/\/\S+$/.test(u));
+    cfg.relays = list;
+    save('chax.net', cfg);
+    net!.setRelays(list.length ? list : DEFAULT_RELAYS);
+    draw();
+  };
+  const act = el('div', 'vact');
+  act.append(sw);
+  net.onStatus(draw);
+  body.append(intro, state, act, span('vfp', 'relais (wss://), un par ligne'), relays);
+  o.append(bar, body);
+  draw();
+
+  const shut = () => {
+    if (closeLightbox !== shut) return;
+    closeLightbox = undefined;
+    o.remove();
+    document.removeEventListener('keydown', onKey, true);
+    back?.focus?.();
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      window.history.state?.lb ? window.history.back() : shut();
+    }
+  };
+  closeLightbox = shut;
+  try {
+    window.history.pushState({ ...(window.history.state ?? {}), lb: true }, '');
+  } catch {
+    /* ignore */
+  }
+  document.addEventListener('keydown', onKey, true);
+  x.onclick = () => (window.history.state?.lb ? window.history.back() : shut());
+  document.body.append(o);
+  x.focus();
 }
 
 /** Face-to-face verification: show our code, scan theirs, pin their key to their name. */
@@ -945,6 +1045,7 @@ document.addEventListener('keydown', (ev) => {
 });
 
 $('fp').onclick = () => verifyDialog();
+$('netBtn').onclick = () => netDialog();
 $('vbtn').onclick = () => verifyDialog(current);
 document.addEventListener('visibilitychange', () => {
   if (viewing()) {
@@ -990,9 +1091,22 @@ function start(nickname: string): void {
     relay = new WebSocketTransport(/^wss?:/.test(param) ? param : `ws://${location.hostname}:8787`);
     relay.onStatus(() => renderList());
   }
-  if (native && cap?.Plugins?.ChaxBle) ble = new BleTransport(capacitorBridge(cap.Plugins.ChaxBle));
-  const transport: Transport = ble ?? relay ?? new BroadcastChannelTransport();
-  node = new ChaxNode({ transport, identity: loadIdentity(), nickname });
+  const identity = loadIdentity();
+  let transport: Transport;
+  if (native && cap?.Plugins?.ChaxBle) {
+    ble = new BleTransport(capacitorBridge(cap.Plugins.ChaxBle));
+    const cfg = loadNet();
+    net = new NostrTransport({ selfId: toHex(identity.peerId), relays: cfg.relays.length ? cfg.relays : DEFAULT_RELAYS });
+    net.onStatus(() => renderList());
+    transport = new MultiTransport([
+      { name: 'ble', transport: ble },
+      { name: 'net', transport: net },
+    ]);
+    if (cfg.on) net.start();
+    // peers reached through relays only stay visible if we keep announcing ourselves
+    setInterval(() => net?.running && node.announce(), 5 * 60 * 1000);
+  } else transport = relay ?? new BroadcastChannelTransport();
+  node = new ChaxNode({ transport, identity, nickname });
   node.loadSessions(load('chax.sessions') ?? {});
   let sessionSave: number | undefined;
   node.onSessionsChanged(() => {

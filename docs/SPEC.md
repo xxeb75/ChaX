@@ -110,6 +110,7 @@ Le `ttl` est exclu de la signature pour pouvoir être décrémenté par les rela
 4. **Phase 3 :** interface de chat web/desktop sur la même bibliothèque.
 5. **Phase 4 :** transport BLE réel (Web Bluetooth ou application Android native).
 6. **Suite :** vérification en personne : QR de l'empreinte à scanner face à face, badge « vérifié » dans la liste, avertissement si une empreinte inconnue reprend le pseudo d'un contact vérifié ; code court ajouté au pseudo pour distinguer les homonymes.
+7. **Suite :** repli par internet, optionnel et désactivé par défaut : les mêmes paquets (déjà signés, chiffrés pour les messages privés) voyagent comme événements Nostr opaques (kind 4242, étiquette de sujet ou `p` du destinataire, expiration NIP-40, clé jetable par session) via des relais publics. Liens `net|lobby` et `net|p:<pair>`, distingués de `ble|…` dans l'interface (« à portée » / « par internet »). Les relais voient IP, heure et taille ; le canal public y est lisible de tous.
 
 ## 12. Questions ouvertes
 

@@ -75,3 +75,13 @@ export async function idb<T>(mode: IDBTransactionMode, run: (s: IDBObjectStore) 
   });
 }
 export const putFile = (id: string, b: Blob) => idb('readwrite', (s) => s.put(b, id)).catch(() => undefined);
+
+/** Optional internet fallback (Nostr relays). Off by default: ChaX needs no server, this is a choice. */
+export interface NetCfg {
+  on: boolean;
+  relays: string[];
+}
+export const loadNet = (): NetCfg => {
+  const c = load<Partial<NetCfg>>('chax.net');
+  return { on: !!c?.on, relays: Array.isArray(c?.relays) && c.relays.length ? c.relays : [] };
+};

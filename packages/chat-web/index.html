@@ -87,6 +87,8 @@
     .id .fp:hover .act { color: var(--amber); }
     .id #flash { margin-left: auto; font-size: var(--fs-dust); color: var(--ivory); }
     .sondeLine { display: flex; align-items: baseline; gap: 12px; min-height: 28px; font-size: var(--fs-rear); color: var(--dust-3); }
+    .netBtn { margin-left: auto; flex: none; min-height: 44px; padding: 0 4px; font-size: var(--fs-rear); color: var(--dust-3); }
+    .netBtn:hover { color: var(--amber); }
     .sonde { display: inline-flex; gap: 3px; letter-spacing: 0; color: var(--dust-3); flex: none; }
     .sonde i { font-style: normal; display: inline-block; }
     .sonde i.on { color: var(--ivory); }
@@ -261,7 +263,7 @@
           <button class="fp" id="fp" type="button" aria-label="Ouvrir mon code pour me faire vérifier en personne"><span id="meFp"></span><span class="act" aria-hidden="true">vérifier ›</span></button>
           <span id="flash" role="status" aria-live="polite"></span>
         </div>
-        <div class="sondeLine"><span class="sonde" id="sonde" aria-hidden="true"></span><span id="meshTxt"></span></div>
+        <div class="sondeLine"><span class="sonde" id="sonde" aria-hidden="true"></span><span id="meshTxt"></span><button id="netBtn" class="netBtn hide" type="button" aria-label="Repli par internet : réglages"></button></div>
         <label class="qline q"><span class="car" aria-hidden="true">›</span><span class="sr">Filtrer les conversations</span><input id="q" type="text" placeholder="chercher, entrée pour ouvrir" enterkeyhint="go" autocomplete="off" spellcheck="false" /></label>
       </div>
       <div class="groupbar"><span>conversations</span><span id="count" class="tnum"></span></div>

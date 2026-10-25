@@ -13,6 +13,7 @@ import {
   type ChatMessage,
   type Transport,
 } from '../../core/src';
+import { VERSION, autoCheck, check, checkOnLaunch, setAutoCheck, type Update } from './update';
 import { encodeCode, parseCode, qrElement, scanCamera, type Trusted } from './verify';
 import { ALERTS, MAX_LINES, IMAGE_MIMES, PUBLIC, cap, idb, load, loadIdentity, loadNet, native, putFile, save, type Line, type Status } from './store';
 
@@ -635,6 +636,14 @@ function lightbox(id: string, name: string, bytes: number): void {
   });
 }
 
+/** The banner at the top of the list when a newer build exists. It opens the download in the browser. */
+function offerUpdate(u: Update): void {
+  const b = $<HTMLButtonElement>('upd');
+  b.textContent = `version ${u.version} disponible · télécharger ›`;
+  b.classList.remove('hide');
+  b.onclick = () => window.open(u.url, '_blank', 'noopener');
+}
+
 /** The internet fallback: what it is, what it costs in privacy, and the switch. */
 function netDialog(): void {
   if (!net) return;
@@ -690,7 +699,28 @@ function netDialog(): void {
   const act = el('div', 'vact');
   act.append(sw);
   net.onStatus(draw);
-  body.append(intro, state, act, span('vfp', 'relais (wss://), un par ligne'), relays);
+  const upState = el('p', 'vres');
+  upState.setAttribute('role', 'status');
+  const upAct = el('div', 'vact');
+  const look = el('button', undefined, 'chercher une mise à jour ›');
+  look.type = 'button';
+  look.onclick = async () => {
+    upState.textContent = 'Recherche…';
+    const u = await check();
+    if (u) offerUpdate(u);
+    upState.textContent = u ? `La version ${u.version} est disponible.` : `Version ${VERSION} : à jour, ou GitHub injoignable.`;
+  };
+  const auto = el('button', undefined, '');
+  auto.type = 'button';
+  const drawAuto = () => (auto.textContent = autoCheck() ? 'vérification au lancement : oui ›' : 'vérification au lancement : non ›');
+  auto.onclick = () => {
+    setAutoCheck(!autoCheck());
+    drawAuto();
+  };
+  drawAuto();
+  upAct.append(look, auto);
+  const upIntro = el('p', 'vintro', `Version ${VERSION}. La vérification contacte github.com (une fois par jour au plus) et lui révèle votre adresse IP ; rien d’autre n’est envoyé.`);
+  body.append(intro, state, act, span('vfp', 'relais (wss://), un par ligne'), relays, upIntro, upAct, upState);
   o.append(bar, body);
   draw();
 
@@ -1183,6 +1213,7 @@ function start(nickname: string): void {
   $('app').dataset.view = wide() ? 'chat' : 'list';
   renderChat(true);
   renderList();
+  if (native) void checkOnLaunch().then((u) => u && offerUpdate(u));
 }
 
 const saved = load<string>('chax.nick');

@@ -75,6 +75,8 @@ function unb64(s: string): Uint8Array {
   return out;
 }
 const utf8 = (s: string) => new TextEncoder().encode(s);
+/** Relays only accept 32-byte hex values in `#p` filters; a peer id is 8 bytes, so both sides derive the same 64-hex tag. */
+export const peerTag = (peerIdHex: string): string => toHex(sha256(utf8(`chax-peer-v1:${peerIdHex}`)));
 
 export class NostrTransport implements Transport {
   readonly mtu = 32 * 1024;
@@ -189,7 +191,7 @@ export class NostrTransport implements Transport {
           'REQ',
           'chax',
           { kinds: [NOSTR_KIND], '#t': [NOSTR_TOPIC], since, limit: 500 },
-          { kinds: [NOSTR_KIND], '#p': [this.selfId], since, limit: 500 },
+          { kinds: [NOSTR_KIND], '#p': [peerTag(this.selfId)], since, limit: 500 },
         ]),
       );
       this.refreshLinks();
@@ -291,7 +293,7 @@ export class NostrTransport implements Transport {
     }
     const content = b64(bytes);
     if (content.length > MAX_CONTENT) return;
-    const tag = isBroadcast(packet.dst) ? ['t', NOSTR_TOPIC] : ['p', toHex(packet.dst)];
+    const tag = isBroadcast(packet.dst) ? ['t', NOSTR_TOPIC] : ['p', peerTag(toHex(packet.dst))];
     const key = `${toHex(packet.msgId)}:${tag[1]}`;
     const now = this.clock();
     const last = this.published.get(key);

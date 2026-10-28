@@ -1122,20 +1122,19 @@ function start(nickname: string): void {
     relay.onStatus(() => renderList());
   }
   const identity = loadIdentity();
-  let transport: Transport;
-  if (native && cap?.Plugins?.ChaxBle) {
-    ble = new BleTransport(capacitorBridge(cap.Plugins.ChaxBle));
-    const cfg = loadNet();
-    net = new NostrTransport({ selfId: toHex(identity.peerId), relays: cfg.relays.length ? cfg.relays : DEFAULT_RELAYS });
-    net.onStatus(() => renderList());
-    transport = new MultiTransport([
-      { name: 'ble', transport: ble },
-      { name: 'net', transport: net },
-    ]);
-    if (cfg.on) net.start();
-    // peers reached through relays only stay visible if we keep announcing ourselves
-    setInterval(() => net?.running && node.announce(), 5 * 60 * 1000);
-  } else transport = relay ?? new BroadcastChannelTransport();
+  if (native && cap?.Plugins?.ChaxBle) ble = new BleTransport(capacitorBridge(cap.Plugins.ChaxBle));
+  // The radio (or, in a browser, other tabs / the dev relay) plus the optional internet fallback. A browser cannot
+  // speak Bluetooth, so for a PC the fallback is how it meets the phones.
+  const cfg = loadNet();
+  net = new NostrTransport({ selfId: toHex(identity.peerId), relays: cfg.relays.length ? cfg.relays : DEFAULT_RELAYS });
+  net.onStatus(() => renderList());
+  const transport: Transport = new MultiTransport([
+    { name: ble ? 'ble' : 'local', transport: ble ?? relay ?? new BroadcastChannelTransport() },
+    { name: 'net', transport: net },
+  ]);
+  if (cfg.on) net.start();
+  // peers reached through relays only stay visible if we keep announcing ourselves
+  setInterval(() => net?.running && node.announce(), 5 * 60 * 1000);
   node = new ChaxNode({ transport, identity, nickname });
   node.loadSessions(load('chax.sessions') ?? {});
   let sessionSave: number | undefined;

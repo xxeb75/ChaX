@@ -9,6 +9,8 @@ import jsQR from 'jsqr';
 export interface Trusted {
   name: string;
   at: number;
+  /** Accepted without scanning their code: allowed to write, but not proven to be who they claim. */
+  accepted?: boolean;
 }
 
 const ID_HEX = /^[0-9a-f]{16}$/;

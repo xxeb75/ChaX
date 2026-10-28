@@ -135,9 +135,10 @@ const spaced = (hex: string) => hex.replace(/(.{4})/g, '$1 ').trim();
 const neighborIds = () => new Set(node.neighbors.values());
 /** Neighbours reached by radio, as opposed to the ones only reachable through the internet relays. */
 const rangeIds = () => new Set([...node.neighbors].filter(([l]) => !l.startsWith('net|')).map(([, p]) => p));
-const isVerified = (k: string) => !!trust[k];
+const isVerified = (k: string) => !!trust[k] && !trust[k]!.accepted;
+const isAccepted = (k: string) => !!trust[k]?.accepted;
 /** Private conversations are for verified contacts: strangers on the air can read the public channel, not write to us. */
-const canWrite = (k: string) => !isPeerKey(k) || isVerified(k);
+const canWrite = (k: string) => !isPeerKey(k) || !!trust[k];
 /** Someone not verified who goes by the name of a contact we did verify: the classic impersonation. */
 const lookalike = (k: string) => isPeerKey(k) && !trust[k] && Object.entries(trust).some(([id, t]) => id !== k && t.name === names.get(k));
 function labelOf(k: string): string {
@@ -378,6 +379,8 @@ function rowEl(r: Row, i: number, selected: boolean): HTMLButtonElement {
   l1.append(g, span('nm', r.label));
   if (isVerified(r.k)) {
     l1.append(span('chk', '✓'), span('sr', ', vérifié'));
+  } else if (isAccepted(r.k)) {
+    l1.append(span('acc', 'accepté'));
   } else if (lookalike(r.k)) {
     l1.append(span('warnmark', '⚠'), span('sr', ', porte le pseudo d’un contact vérifié'));
   }
@@ -465,8 +468,9 @@ function header(): void {
   const vbtn = $<HTMLButtonElement>('vbtn');
   vbtn.classList.toggle('hide', !isPeerKey(current));
   if (isPeerKey(current)) {
-    vbtn.textContent = isVerified(current) ? '✓ vérifié' : 'vérifier ›';
+    vbtn.textContent = isVerified(current) ? '✓ vérifié' : isAccepted(current) ? 'accepté · vérifier ›' : 'vérifier ›';
     vbtn.classList.toggle('ok', isVerified(current));
+    vbtn.classList.toggle('todo', !trust[current]);
     vbtn.setAttribute('aria-label', isVerified(current) ? 'Contact vérifié en personne : gérer' : 'Vérifier ce contact en personne');
   }
   const fake = lookalike(current);
@@ -503,17 +507,17 @@ function composer(): void {
   $('attach').classList.toggle('hide', alert || locked);
   const hint = $('hint');
   hint.replaceChildren();
-  hint.append(
-    document.createTextNode(
-      locked
-        ? 'vérifiez ce contact en personne (« vérifier › ») pour échanger des messages privés'
-        : alert
-          ? 'part chez tout le monde, même ceux qui arriveront plus tard'
-          : isPeerKey(current)
-            ? 'chiffré'
-            : 'visible par tous',
-    ),
-  );
+  if (locked) {
+    const acc = el('button', 'gov', 'accepter ›');
+    acc.type = 'button';
+    acc.onclick = () => verifyDialog(current);
+    const go = el('button', 'gov', 'vérifier en personne ›');
+    go.type = 'button';
+    go.onclick = () => verifyDialog(current);
+    hint.append(acc, document.createTextNode(' '), go);
+  } else {
+    hint.append(document.createTextNode(alert ? 'part chez tout le monde, même ceux qui arriveront plus tard' : isPeerKey(current) ? 'chiffré' : 'visible par tous'));
+  }
   if (!alert && !locked) hint.append(span('kb', ' · entrée envoie, maj+entrée saute une ligne, coller ou déposer une image pour la joindre'));
   syncSend();
 }
@@ -1149,16 +1153,40 @@ function verifyDialog(focus?: string): void {
     }
   };
   act.append(scan, copy);
-  if (focus && isVerified(focus)) {
-    const drop = el('button', undefined, 'retirer la vérification ›');
+  if (focus && !trust[focus]) {
+    const accept = el('button', 'primary', 'accepter sans code ›');
+    accept.type = 'button';
+    accept.onclick = () => {
+      trust[focus] = { name: labelOf(focus), at: Date.now(), accepted: true };
+      save('chax.trust', trust);
+      if (hidden[focus]) {
+        delete hidden[focus];
+        save('chax.hidden', hidden);
+      }
+      listSig = '';
+      renderList();
+      header();
+      composer();
+      stopCam?.();
+      stopCam = undefined;
+      if (window.history.state?.lb) window.history.back();
+      else shut();
+      fail(`${labelOf(focus)} est accepté. Sans code, rien ne prouve que c’est bien cette personne.`);
+    };
+    act.prepend(accept);
+  }
+  if (focus && trust[focus]) {
+    const drop = el('button', undefined, isAccepted(focus) ? 'retirer l’accord ›' : 'retirer la vérification ›');
     drop.type = 'button';
+    const was = isAccepted(focus);
     drop.onclick = () => {
       delete trust[focus];
       save('chax.trust', trust);
       listSig = '';
       renderList();
       header();
-      say('Vérification retirée.');
+      composer();
+      say(was ? 'Accord retiré.' : 'Vérification retirée.');
       drop.remove();
     };
     act.append(drop);

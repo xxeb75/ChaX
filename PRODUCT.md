@@ -28,7 +28,7 @@ Principe de portée (confirmé) : le Bluetooth est toujours privilégié. Quand 
 
 Spec dans `docs/SPEC.md`. Monorepo TypeScript : `packages/core` (protocole, transport Nostr), `chat-web` (interface), `sim-web`, `relay` (pont WebSocket optionnel), `android` (Capacitor, BLE natif, service de premier plan avec nœud JS sans interface), `windows` (.NET 8, WebView2, BLE WinRT en périphérique seul). Testé sur POCO, Pixel 8 et un PC Windows. Conversations : public, alertes, privées ; une conversation peut être supprimée ou vidée.
 
-Distribution des versions de test : Releases GitHub publiques de `xxeb75/ChaX` (APK). L'app vérifie une fois par jour au plus s'il existe une version plus récente, désactivable ; un bandeau mène au téléchargement. Numéro de version unique dans `packages/chat-web/package.json`, à incrémenter à chaque APK distribué.
+Distribution des versions de test : Releases GitHub publiques de `xxeb75/ChaX` (APK). L'app vérifie toutes les six heures au plus s'il existe une version plus récente, désactivable ; une fenêtre au lancement et un bandeau mènent au téléchargement. Numéro de version unique dans `packages/chat-web/package.json`, à incrémenter à chaque APK distribué.
 
 ## Capabilities and Constraints
 

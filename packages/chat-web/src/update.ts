@@ -9,7 +9,7 @@ declare const __APP_VERSION__: string;
  */
 export const REPO = 'xxeb75/ChaX';
 export const VERSION = __APP_VERSION__;
-const DAY_MS = 24 * 3600 * 1000;
+const DAY_MS = 6 * 3600 * 1000; // a new build should reach testers the same day
 
 export interface Update {
   version: string;

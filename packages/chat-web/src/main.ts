@@ -749,6 +749,58 @@ function deleteDialog(key: string): void {
   no.focus();
 }
 
+/** Shown once per launch when a newer build exists: impossible to miss, one tap to download. */
+function updateDialog(u: Update): void {
+  const back = document.activeElement as HTMLElement | null;
+  const o = el('div', 'lightbox verify');
+  o.setAttribute('role', 'dialog');
+  o.setAttribute('aria-modal', 'true');
+  o.setAttribute('aria-label', 'Mise à jour disponible');
+  const bar = el('div', 'bar');
+  const x = el('button', undefined, 'plus tard ×');
+  x.type = 'button';
+  bar.append(span('', 'mise à jour'), x);
+  const body = el('div', 'vbody');
+  const title = el('p', 'vstat', `Version ${u.version} disponible`);
+  title.style.cssText = 'margin:0;font-size:var(--fs-front)';
+  const intro = el('p', 'vintro', `Vous avez la ${VERSION}. Le téléchargement s’ouvre dans le navigateur ; Android propose ensuite d’installer par-dessus, vos conversations sont conservées.`);
+  const act = el('div', 'vact');
+  const go = el('button', 'primary', 'télécharger ›');
+  go.type = 'button';
+  act.append(go);
+  body.append(title, intro, act);
+  o.append(bar, body);
+
+  const shut = () => {
+    if (closeLightbox !== shut) return;
+    closeLightbox = undefined;
+    o.remove();
+    document.removeEventListener('keydown', onKey, true);
+    back?.focus?.();
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      window.history.state?.lb ? window.history.back() : shut();
+    }
+  };
+  closeLightbox = shut;
+  try {
+    window.history.pushState({ ...(window.history.state ?? {}), lb: true }, '');
+  } catch {
+    /* ignore */
+  }
+  document.addEventListener('keydown', onKey, true);
+  const close = () => (window.history.state?.lb ? window.history.back() : shut());
+  x.onclick = close;
+  go.onclick = () => {
+    window.open(u.url, '_blank', 'noopener');
+    close();
+  };
+  document.body.append(o);
+  go.focus();
+}
+
 /** The banner at the top of the list when a newer build exists. It opens the download in the browser. */
 function offerUpdate(u: Update): void {
   const b = $<HTMLButtonElement>('upd');
@@ -866,11 +918,14 @@ function netDialog(): void {
   };
   drawAuto();
   upAct.append(look, auto);
-  const upIntro = el('p', 'vintro', `Version ${VERSION}. La vérification contacte github.com (une fois par jour au plus) et lui révèle votre adresse IP ; rien d’autre n’est envoyé.`);
+  const upIntro = el('p', 'vintro', `Version ${VERSION}. La vérification contacte github.com (toutes les six heures au plus) et lui révèle votre adresse IP ; rien d’autre n’est envoyé.`);
   const adv = el('details');
-  adv.append(el('summary', undefined, 'avancé'), span('vfp', 'relais (wss://), un par ligne'), relays, upIntro, upAct, upState);
+  adv.append(el('summary', undefined, 'relais'), span('vfp', 'relais (wss://), un par ligne'), relays);
+  const upBlock = el('div');
+  upBlock.style.cssText = 'display:grid;gap:10px;border-top:1px solid var(--dust-1);padding-top:14px';
+  upBlock.append(upIntro, upAct, upState);
 
-  body.append(state, group, privacy, adv);
+  body.append(state, group, privacy, adv, upBlock);
   o.append(bar, body);
   draw();
 
@@ -1337,7 +1392,7 @@ function start(nickname: string): void {
   $('app').dataset.view = wide() ? 'chat' : 'list';
   renderChat(true);
   renderList();
-  if (native) void checkOnLaunch().then((u) => u && offerUpdate(u));
+  if (native) void checkOnLaunch().then((u) => u && (offerUpdate(u), updateDialog(u)));
 }
 
 const saved = load<string>('chax.nick');

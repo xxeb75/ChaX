@@ -45,7 +45,12 @@ export function compare(a: string, b: string): number {
 }
 
 /** Asks GitHub for the latest release. Resolves to the update if it is newer than this build, else undefined. */
+let failed = false;
+/** True when the last check could not reach GitHub, as opposed to finding nothing newer. */
+export const checkFailed = (): boolean => failed;
+
 export async function check(): Promise<Update | undefined> {
+  failed = false;
   try {
     const r = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
       headers: { Accept: 'application/vnd.github+json' },
@@ -59,6 +64,7 @@ export async function check(): Promise<Update | undefined> {
     save('chax.update', { ...state(), at: Date.now(), found });
     return found?.url.startsWith('https://') ? found : undefined;
   } catch {
+    failed = true;
     return undefined;
   }
 }

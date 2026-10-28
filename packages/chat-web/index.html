@@ -27,6 +27,7 @@
       --dust-3: #8c8c93;
       --ivory: #f1efe9;
       --ivory-2: #c9c7c1;
+      --danger: #ff6b5b;
       --amber: #ffb000;
       --mono: 'JetBrains Mono', 'Cascadia Code', ui-monospace, 'SFMono-Regular', Consolas, monospace;
       --fs-front: 20px;
@@ -80,13 +81,17 @@
     .top { padding: 4px 20px 0; }
     .id { display: flex; align-items: baseline; gap: 12px; min-height: 44px; }
     .id .cat { flex: none; align-self: flex-start; margin-top: 1px; color: var(--amber); }
-    .id .wm { font-size: var(--fs-mid); letter-spacing: .02em; }
-    .id .fp { font-size: var(--fs-dust); color: var(--dust-3); min-height: 44px; display: inline-flex; align-items: baseline; gap: 8px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .id .fp:hover { color: var(--ivory); }
-    .id .fp .act { color: var(--dust-3); flex: none; }
-    .id .fp:hover .act { color: var(--amber); }
+    .id .wm { font-size: var(--fs-mid); letter-spacing: .02em; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fp { font-size: var(--fs-dust); color: var(--dust-3); min-height: 40px; width: 100%; display: flex; align-items: baseline; gap: 12px; font-variant-numeric: tabular-nums; }
+    .fp #meFp { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fp:hover { color: var(--ivory); }
+    .fp .act { color: var(--dust-3); flex: none; margin-left: auto; }
+    .fp:hover .act { color: var(--amber); }
     .id #flash { margin-left: auto; font-size: var(--fs-dust); color: var(--ivory); }
     .sondeLine { display: flex; align-items: baseline; gap: 12px; min-height: 28px; font-size: var(--fs-rear); color: var(--dust-3); }
+    .sondeLine #meshTxt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sondeLine .act { margin-left: auto; flex: none; min-height: 44px; margin-top: -8px; margin-bottom: -8px; color: var(--dust-3); font-size: var(--fs-rear); }
+    .sondeLine .act:hover { color: var(--amber); }
     .upd { min-height: 44px; width: 100%; text-align: left; font-size: var(--fs-rear); color: var(--amber); }
     .upd:hover { color: var(--ivory); }
     .links { display: inline-flex; align-self: flex-start; align-items: center; gap: 10px; flex: none; min-height: 44px; min-width: 44px; justify-content: center; padding: 0 4px; margin-left: auto; margin-top: -10px; }
@@ -94,7 +99,9 @@
     .links svg { display: block; flex: none; }
     .links [data-s="live"] { color: var(--amber); }
     .links [data-s="idle"] { color: var(--ivory-2); }
-    .links [data-s="off"] { color: var(--dust-2); }
+    .links [data-s="off"] { color: var(--dust-3); }
+    .links .x { display: none; }
+    .links [data-s="off"] .x { display: inline; }
     .links:hover svg[data-s] { color: var(--ivory); }
     .sonde { display: inline-flex; gap: 3px; letter-spacing: 0; color: var(--dust-3); flex: none; }
     .sonde i { font-style: normal; display: inline-block; }
@@ -121,6 +128,7 @@
     .row:hover { background: #101013; }
     .row.selected, .row.selected:hover { background: var(--amber); color: var(--void); opacity: 1; filter: none; transform: none; }
     .row.selected .glyph, .row.selected .meta, .row.selected .meta .n, .row.selected .meta .hint, .row.selected .pv { color: var(--void); }
+    .row.selected:focus-visible { outline-color: var(--void); outline-offset: -4px; }
     .row.selected .fill { border-color: rgba(10, 10, 12, .55); }
     .row.alertRow .nm { text-transform: uppercase; letter-spacing: .12em; }
     .none { margin: 8px 12px; color: var(--dust-3); font-size: var(--fs-rear); max-width: 36ch; text-wrap: pretty; }
@@ -139,14 +147,36 @@
     .chead .line2 > :last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .vbtn { margin-left: auto; flex: none; min-height: 44px; padding: 0 4px; font-size: var(--fs-rear); color: var(--dust-3); }
     .vbtn:hover { color: var(--amber); }
-    .vbtn.del { margin-left: 0; }
+    .vbtn.del { margin-left: 8px; min-width: 44px; padding: 0; display: grid; place-items: center; }
     .vbtn.hide + .vbtn.del { margin-left: auto; }
-    .verify .vact button.danger { color: var(--amber); }
+    .vbtn.del:hover, .vbtn.del:focus-visible { color: var(--danger); }
+    .verify .vact button.danger { color: var(--danger); }
+    .verify .vact button.danger:hover { color: var(--ivory); }
+    .verify .vact button.primary { background: var(--ivory); color: var(--void); padding: 0 18px; }
+    .verify .vact button.primary:hover { background: var(--amber); color: var(--void); }
     .vbtn.ok { color: var(--ivory); }
     .row .chk { color: var(--ivory); flex: none; }
     .row .warnmark { color: var(--amber); flex: none; }
     .row.selected .chk, .row.selected .warnmark { color: var(--void); }
     .verify .vbody { display: flex; flex-direction: column; align-items: center; gap: 14px; overflow: auto; padding: 8px 0; min-height: 0; }
+    .netd .vbody { align-items: stretch; width: min(56ch, 100%); margin: 0 auto; gap: 18px; text-align: left; }
+    .netd .vstat { margin: 0; font-size: var(--fs-front); }
+    .netd .vstat small { display: block; margin-top: 4px; font-size: var(--fs-rear); color: var(--dust-3); }
+    .netd .modes { display: grid; gap: 2px; border: 0; padding: 0; margin: 0; }
+    .netd .mode { display: grid; grid-template-columns: 2ch 1fr; column-gap: 8px; min-height: 56px; padding: 8px 10px; color: var(--ivory-2); }
+    .netd .mode .car { color: var(--dust-3); }
+    .netd .mode small { grid-column: 2; font-size: var(--fs-rear); color: var(--dust-3); text-wrap: pretty; }
+    .netd .mode:hover { background: #101013; }
+    .netd .mode[aria-checked="true"] { color: var(--ivory); background: var(--void-2); }
+    .netd .mode[aria-checked="true"] .car { color: var(--amber); }
+    .netd details { border-top: 1px solid var(--dust-1); }
+    .netd summary { min-height: 48px; display: flex; align-items: center; cursor: pointer; color: var(--ivory); list-style: none; }
+    .netd summary::-webkit-details-marker { display: none; }
+    .netd summary::after { content: '+'; margin-left: auto; color: var(--dust-3); }
+    .netd details[open] summary::after { content: '\2212'; }
+    .netd details > :not(summary) { margin-bottom: 14px; }
+    .netd .vintro { max-width: none; text-align: left; }
+    .netd .vact { justify-content: flex-start; }
     .verify .vintro { margin: 0; max-width: 46ch; font-size: var(--fs-rear); color: var(--ivory-2); }
     .verify .qr { width: min(60vw, 240px); flex: none; }
     .verify .qr svg { display: block; width: 100%; height: auto; }
@@ -220,7 +250,7 @@
     .xfer.stalled { color: var(--ivory); }
     .xfer button { min-height: 44px; color: var(--dust-3); font-size: var(--fs-rear); }
     .xfer button:hover { color: var(--amber); }
-    .lightbox { position: fixed; inset: 0; z-index: 10; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: rgba(10, 10, 12, .985); padding: var(--top) 12px var(--bottom); }
+    .lightbox { position: fixed; inset: 0; z-index: 10; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--void); padding: var(--top) 12px var(--bottom); }
     .lightbox .bar { display: flex; gap: 14px; align-items: baseline; justify-content: space-between; font-size: var(--fs-rear); color: var(--dust-3); }
     .lightbox .bar button { min-height: 48px; min-width: 48px; color: var(--ivory); font-size: var(--fs-mid); }
     .lightbox .bar button:hover { color: var(--amber); }
@@ -268,11 +298,11 @@
         <div class="id">
           <svg class="cat" viewBox="0 0 16 16" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M2 1.5 6 5h4l4-3.5V9c0 3.5-2.7 5.5-6 5.5S2 12.5 2 9z"/><path fill="#0a0a0c" d="M5 8h2v2H5zM9 8h2v2H9z"/></svg>
           <span class="wm" id="meName"></span>
-          <button class="fp" id="fp" type="button" aria-label="Ouvrir mon code pour me faire vérifier en personne"><span id="meFp"></span><span class="act" aria-hidden="true">mon code ›</span></button>
           <span id="flash" role="status" aria-live="polite"></span>
-          <button id="netBtn" class="links hide" type="button" aria-label="Liaisons : réglages"><svg class="bt" data-s="off" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true" focusable="false"><path d="M7 7.5l10 9-5 4.5V3l5 4.5-10 9"/></svg><svg class="gl" data-s="off" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3.2 3 3.2 15 0 18M12 3c-3.2 3-3.2 15 0 18"/></svg></button>
+          <button id="netBtn" class="links hide" type="button" aria-label="Liaisons : réglages"><svg class="bt" data-s="off" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true" focusable="false"><path d="M7 7.5l10 9-5 4.5V3l5 4.5-10 9"/><path class="x" d="M3.5 20.5 20.5 3.5"/></svg><svg class="gl" data-s="off" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3.2 3 3.2 15 0 18M12 3c-3.2 3-3.2 15 0 18"/><path class="x" d="M3.5 20.5 20.5 3.5"/></svg></button>
         </div>
-        <div class="sondeLine"><span class="sonde" id="sonde" aria-hidden="true"></span><span id="meshTxt"></span></div>
+        <button class="fp" id="fp" type="button" aria-label="Ouvrir mon code pour me faire vérifier en personne"><span id="meFp"></span><span class="act" aria-hidden="true">mon code ›</span></button>
+        <div class="sondeLine"><span class="sonde" id="sonde" aria-hidden="true"></span><span id="meshTxt"></span><button class="act hide" id="netLink" type="button">liaisons ›</button></div>
         <button id="upd" class="upd hide" type="button"></button>
       </div>
       <div class="groupbar"><span>conversations</span><span id="count" class="tnum"></span></div>
@@ -285,7 +315,7 @@
           <button id="back" type="button" aria-label="Retour aux conversations">‹</button>
           <h2 id="title"></h2>
           <button id="vbtn" class="vbtn hide" type="button"></button>
-          <button id="delBtn" class="vbtn del hide" type="button"></button>
+          <button id="delBtn" class="vbtn del hide" type="button"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true" focusable="false"><path d="M4 7h16M9.5 7V4h5v3M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/></svg></button>
         </div>
         <div class="line2" id="sub"></div>
       </header>

@@ -14,10 +14,10 @@ import {
   type Transport,
 } from '../../core/src';
 import { windowsBridge, windowsHost } from './windows';
-import { VERSION, autoCheck, check, checkOnLaunch, setAutoCheck, type Update } from './update';
+import { VERSION, autoCheck, check, checkFailed, checkOnLaunch, setAutoCheck, type Update } from './update';
 import { encodeCode, parseCode, qrElement, scanCamera, type Trusted } from './verify';
 import { runFallback } from './fallback';
-import { ALERTS, MAX_LINES, IMAGE_MIMES, PUBLIC, cap, idb, load, loadIdentity, loadNet, native, putFile, save, type Line, type Status } from './store';
+import { ALERTS, MAX_LINES, IMAGE_MIMES, PUBLIC, cap, idb, load, loadIdentity, loadNet, native, putFile, save, type Line, type NetMode, type Status } from './store';
 
 interface Incoming {
   key: string;
@@ -261,6 +261,7 @@ function renderSonde(): void {
   const nb = document.getElementById('netBtn');
   if (nb) {
     nb.classList.toggle('hide', !net);
+    $('netLink').classList.toggle('hide', !net);
     const bt = nb.querySelector<SVGElement>('.bt')!;
     const gl = nb.querySelector<SVGElement>('.gl')!;
     bt.classList.toggle('hide', !ble);
@@ -295,6 +296,8 @@ function lastOf(k: string): Line | undefined {
   return l?.[l.length - 1];
 }
 
+const firstSeen = new Map<string, number>();
+
 function buildRows(): Row[] {
   const online = neighborIds();
   let renamed = false;
@@ -316,18 +319,21 @@ function buildRows(): Row[] {
     on: isPeerKey(k) ? online.has(k) : undefined,
     v: isVerified(k) ? 1 : lookalike(k) ? 2 : 0,
   }));
+  // rows that never talked keep the order they first showed up in, so peers arriving or leaving do not shuffle the list under a finger
+  for (const r of rows) if (!firstSeen.has(r.k)) firstSeen.set(r.k, firstSeen.size);
   const order = (r: Row) => (r.k === PUBLIC ? 0 : r.k === ALERTS ? 1 : 2);
-  rows.sort(
-    (a, b) =>
-      (b.last?.at ?? 0) - (a.last?.at ?? 0) ||
-      order(a) - order(b) ||
-      Number(b.on ?? false) - Number(a.on ?? false) ||
-      a.label.localeCompare(b.label),
-  );
+  rows.sort((a, b) => (b.last?.at ?? 0) - (a.last?.at ?? 0) || order(a) - order(b) || firstSeen.get(a.k)! - firstSeen.get(b.k)!);
   return rows;
 }
 
 let listSig = '';
+let listHeld = 0; // the list keeps its shape while a finger is on it or it is still scrolling
+let listLate = 0;
+function holdList(ms: number): void {
+  listHeld = Math.max(listHeld, Date.now() + ms);
+  clearTimeout(listLate);
+  listLate = window.setTimeout(renderList, ms + 20);
+}
 function renderList(): void {
   renderSonde();
   const rows = buildRows();
@@ -335,6 +341,7 @@ function renderList(): void {
   const sig = JSON.stringify([rows, highlighted, current]);
   $('count').textContent = String(rows.length);
   if (sig === listSig) return;
+  if (Date.now() < listHeld) return;
   listSig = sig;
 
   const nav = $('convs');
@@ -383,6 +390,7 @@ function rowEl(r: Row, i: number, selected: boolean): HTMLButtonElement {
 // ---- chat pane --------------------------------------------------------------------
 
 function open(key: string): void {
+  listHeld = 0;
   const wasList = $('app').dataset.view === 'list';
   current = key;
   unread[key] = 0;
@@ -403,6 +411,7 @@ function open(key: string): void {
 }
 
 function backToList(): void {
+  listHeld = 0;
   $('app').dataset.view = 'list';
   renderList();
 }
@@ -437,8 +446,9 @@ function header(): void {
   const sub = $('sub');
   sub.replaceChildren();
   const del = $<HTMLButtonElement>('delBtn');
-  del.textContent = isPeerKey(current) ? 'supprimer' : 'vider';
-  del.setAttribute('aria-label', isPeerKey(current) ? `Supprimer la conversation avec ${labelOf(current)}` : `Vider la conversation ${current === ALERTS ? 'des alertes' : 'publique'}`);
+  const delLabel = isPeerKey(current) ? `Supprimer la conversation avec ${labelOf(current)}` : `Vider la conversation ${current === ALERTS ? 'des alertes' : 'publique'}`;
+  del.setAttribute('aria-label', delLabel);
+  del.title = delLabel;
   del.classList.toggle('hide', !(history[current]?.length || isPeerKey(current)));
   const vbtn = $<HTMLButtonElement>('vbtn');
   vbtn.classList.toggle('hide', !isPeerKey(current));
@@ -701,7 +711,7 @@ function deleteDialog(key: string): void {
   const act = el('div', 'vact');
   const yes = el('button', 'danger', peer ? 'supprimer ›' : 'vider ›');
   yes.type = 'button';
-  const no = el('button', undefined, 'annuler');
+  const no = el('button', 'primary', 'annuler');
   no.type = 'button';
   act.append(no, yes);
   body.append(intro, act);
@@ -751,49 +761,82 @@ function offerUpdate(u: Update): void {
 function netDialog(): void {
   if (!net) return;
   const back = document.activeElement as HTMLElement | null;
-  const o = el('div', 'lightbox verify');
+  const o = el('div', 'lightbox verify netd');
   o.setAttribute('role', 'dialog');
   o.setAttribute('aria-modal', 'true');
-  o.setAttribute('aria-label', 'Repli par internet');
+  o.setAttribute('aria-label', 'Liaisons : Bluetooth et internet');
   const bar = el('div', 'bar');
   const x = el('button', undefined, 'fermer ×');
   x.type = 'button';
-  bar.append(span('', 'repli par internet'), x);
+  bar.append(span('', 'liaisons'), x);
   const body = el('div', 'vbody');
-  const state = el('p', 'vres');
-  state.setAttribute('role', 'status');
   const cfg = loadNet();
-  const MODES: Record<string, string> = { auto: 'automatique', on: 'toujours actif', off: 'désactivé' };
+
+  // status first: what is happening right now
+  const state = el('p', 'vstat');
+  state.setAttribute('role', 'status');
+  const headline = document.createTextNode('');
+  const detail = el('small');
+  state.append(headline, detail);
+
+  // the one decision: when the internet fallback may be used
+  const MODES: [NetMode, string, string][] = [
+    ['auto', 'automatique', 'Bluetooth d’abord ; internet seulement si personne n’est à portée.'],
+    ['on', 'toujours actif', 'Internet en plus du Bluetooth, en permanence.'],
+    ['off', 'désactivé', 'Bluetooth seul. Rien ne passe par internet.'],
+  ];
+  const group = el('div', 'modes');
+  group.setAttribute('role', 'radiogroup');
+  group.setAttribute('aria-label', 'Utilisation d’internet');
+  const radios = MODES.map(([mode, name, hint]) => {
+    const r = el('button', 'mode');
+    r.type = 'button';
+    r.setAttribute('role', 'radio');
+    const car = span('car', '');
+    car.setAttribute('aria-hidden', 'true');
+    r.append(car, span('', name), el('small', undefined, hint));
+    r.onclick = () => {
+      cfg.mode = mode;
+      save('chax.net', cfg);
+      if (mode === 'on' && !net!.running) net!.start();
+      else if (mode === 'off' && net!.running) net!.stop();
+      draw();
+      renderList();
+    };
+    group.append(r);
+    return r;
+  });
   const draw = () => {
-    const run = net!.running
+    headline.textContent = net!.running ? (net!.connected ? 'Internet : actif' : 'Internet : connexion…') : 'Internet : en veille';
+    detail.textContent = net!.running
       ? net!.connected
-        ? `internet actif (${net!.connected} relais sur ${net!.relayCount})`
-        : 'internet actif, connexion aux relais…'
-      : 'internet en veille, seul le Bluetooth est utilisé';
-    state.textContent = run;
-    sw.textContent = `mode : ${MODES[cfg.mode]} ›`;
+        ? `${net!.connected} relais sur ${net!.relayCount}`
+        : 'les relais ne répondent pas encore'
+      : 'Bluetooth seul pour l’instant';
+    MODES.forEach(([mode], i) => {
+      const r = radios[i]!;
+      r.setAttribute('aria-checked', String(cfg.mode === mode));
+      r.firstElementChild!.textContent = cfg.mode === mode ? '›' : '';
+    });
   };
-  const intro = el(
-    'p',
-    'vintro',
-    'Le Bluetooth passe toujours en premier. En mode automatique, si personne n’est à portée depuis une trentaine de secondes, les messages passent par des relais Nostr publics, puis le Bluetooth reprend dès que des voisins sont revenus. Le contenu des messages privés reste chiffré de bout en bout et signé ; les relais voient seulement votre adresse IP, l’heure et la taille des paquets. Les messages du canal public sont lisibles par n’importe qui sur ces relais.',
+
+  const privacy = el('details');
+  privacy.append(
+    el('summary', undefined, 'ce que voient les relais'),
+    el(
+      'p',
+      'vintro',
+      'En mode automatique, si personne n’est à portée depuis une trentaine de secondes, les messages passent par des relais Nostr publics ; le Bluetooth reprend dès que des voisins reviennent. Les messages privés restent chiffrés de bout en bout et signés : les relais voient seulement votre adresse IP, l’heure et la taille des paquets. Les messages du canal public sont lisibles par n’importe qui sur ces relais.',
+    ),
   );
-  const sw = el('button', undefined, '');
-  sw.type = 'button';
-  sw.onclick = () => {
-    cfg.mode = cfg.mode === 'auto' ? 'on' : cfg.mode === 'on' ? 'off' : 'auto';
-    save('chax.net', cfg);
-    if (cfg.mode === 'on' && !net!.running) net!.start();
-    else if (cfg.mode === 'off' && net!.running) net!.stop();
-    draw();
-    renderList();
-  };
+
+  // advanced: relay list and update check
   const relays = el('textarea');
   relays.rows = 3;
   relays.spellcheck = false;
   relays.value = (cfg.relays.length ? cfg.relays : DEFAULT_RELAYS).join('\n');
   relays.setAttribute('aria-label', 'Adresses des relais, une par ligne');
-  relays.style.cssText = 'width:min(92vw,420px);font-size:var(--fs-dust);border-bottom:1px solid var(--dust-2);';
+  relays.style.cssText = 'width:100%;font-size:var(--fs-dust);border-bottom:1px solid var(--dust-3);';
   relays.onchange = () => {
     const list = relays.value.split(/\s+/).filter((u) => /^wss:\/\/\S+$/.test(u));
     cfg.relays = list;
@@ -801,11 +844,10 @@ function netDialog(): void {
     net!.setRelays(list.length ? list : DEFAULT_RELAYS);
     draw();
   };
-  const act = el('div', 'vact');
-  act.append(sw);
   net.onStatus(draw);
   const upState = el('p', 'vres');
   upState.setAttribute('role', 'status');
+  upState.style.textAlign = 'left';
   const upAct = el('div', 'vact');
   const look = el('button', undefined, 'chercher une mise à jour ›');
   look.type = 'button';
@@ -813,7 +855,7 @@ function netDialog(): void {
     upState.textContent = 'Recherche…';
     const u = await check();
     if (u) offerUpdate(u);
-    upState.textContent = u ? `La version ${u.version} est disponible.` : `Version ${VERSION} : à jour, ou GitHub injoignable.`;
+    upState.textContent = u ? `La version ${u.version} est disponible.` : checkFailed() ? 'GitHub est injoignable : réessayez plus tard.' : `Version ${VERSION} : vous avez la dernière.`;
   };
   const auto = el('button', undefined, '');
   auto.type = 'button';
@@ -825,7 +867,10 @@ function netDialog(): void {
   drawAuto();
   upAct.append(look, auto);
   const upIntro = el('p', 'vintro', `Version ${VERSION}. La vérification contacte github.com (une fois par jour au plus) et lui révèle votre adresse IP ; rien d’autre n’est envoyé.`);
-  body.append(intro, state, act, span('vfp', 'relais (wss://), un par ligne'), relays, upIntro, upAct, upState);
+  const adv = el('details');
+  adv.append(el('summary', undefined, 'avancé'), span('vfp', 'relais (wss://), un par ligne'), relays, upIntro, upAct, upState);
+
+  body.append(state, group, privacy, adv);
   o.append(bar, body);
   draw();
 
@@ -1138,7 +1183,12 @@ $('text').addEventListener('keydown', (ev) => {
 });
 
 $('fp').onclick = () => verifyDialog();
+const convs = $('convs');
+convs.addEventListener('pointerdown', () => holdList(1500), { passive: true });
+convs.addEventListener('pointerup', () => (listHeld = 0), { passive: true });
+convs.addEventListener('scroll', () => holdList(500), { passive: true });
 $('netBtn').onclick = () => netDialog();
+$('netLink').onclick = () => netDialog();
 $('vbtn').onclick = () => verifyDialog(current);
 $('delBtn').onclick = () => deleteDialog(current);
 document.addEventListener('visibilitychange', () => {

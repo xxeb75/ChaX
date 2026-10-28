@@ -136,6 +136,8 @@ const neighborIds = () => new Set(node.neighbors.values());
 /** Neighbours reached by radio, as opposed to the ones only reachable through the internet relays. */
 const rangeIds = () => new Set([...node.neighbors].filter(([l]) => !l.startsWith('net|')).map(([, p]) => p));
 const isVerified = (k: string) => !!trust[k];
+/** Private conversations are for verified contacts: strangers on the air can read the public channel, not write to us. */
+const canWrite = (k: string) => !isPeerKey(k) || isVerified(k);
 /** Someone not verified who goes by the name of a contact we did verify: the classic impersonation. */
 const lookalike = (k: string) => isPeerKey(k) && !trust[k] && Object.entries(trust).some(([id, t]) => id !== k && t.name === names.get(k));
 function labelOf(k: string): string {
@@ -339,7 +341,7 @@ function renderList(): void {
   const rows = buildRows();
   const highlighted = wide() ? current : '';
   const sig = JSON.stringify([rows, highlighted, current]);
-  $('count').textContent = String(rows.length);
+  $('count').textContent = String(rows.filter((r) => !(isPeerKey(r.k) && !r.v && !history[r.k]?.length)).length);
   if (sig === listSig) return;
   if (Date.now() < listHeld) return;
   listSig = sig;
@@ -348,7 +350,17 @@ function renderList(): void {
   const focused = nav.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.k : undefined;
   nav.replaceChildren();
   if (!rows.length) nav.append(el('p', 'none', 'Aucune conversation ne correspond. Effacez la recherche pour tout revoir.'));
-  rows.forEach((r, i) => nav.append(rowEl(r, i, r.k === highlighted)));
+  // contacts and conversations first; strangers merely seen on the air (never written to, never verified) wait below
+  const around = (r: Row) => isPeerKey(r.k) && !r.v && !history[r.k]?.length;
+  const mine = rows.filter((r) => !around(r));
+  const seen = rows.filter(around);
+  mine.forEach((r, i) => nav.append(rowEl(r, i, r.k === highlighted)));
+  if (seen.length) {
+    const h = el('div', 'groupbar inl');
+    h.append(span('', 'autour de vous'), span('tnum', String(seen.length)));
+    nav.append(h);
+    seen.forEach((r) => nav.append(rowEl(r, 99, r.k === highlighted)));
+  }
   if (focused) nav.querySelector<HTMLElement>(`[data-k="${CSS.escape(focused)}"]`)?.focus();
 }
 
@@ -480,18 +492,29 @@ function header(): void {
 function composer(): void {
   const alert = current === ALERTS;
   $('composer').classList.toggle('alert', alert);
+  $('composer').classList.toggle('locked', !canWrite(current));
   const input = $<HTMLTextAreaElement>('text');
-  input.placeholder = alert ? 'lieu, danger, besoin' : !wide() ? 'écrire…' : current === PUBLIC ? 'écrire au mesh' : `écrire à ${labelOf(current)}`;
+  const locked = !canWrite(current);
+  input.disabled = locked;
+  input.placeholder = locked ? 'contact non vérifié' : alert ? 'lieu, danger, besoin' : !wide() ? 'écrire…' : current === PUBLIC ? 'écrire au mesh' : `écrire à ${labelOf(current)}`;
   const sendLabel = alert ? "Diffuser l'alerte" : 'Envoyer';
   $('sendBtn').setAttribute('aria-label', sendLabel);
   $('sendBtn').title = sendLabel;
-  $('attach').classList.toggle('hide', alert);
+  $('attach').classList.toggle('hide', alert || locked);
   const hint = $('hint');
   hint.replaceChildren();
   hint.append(
-    document.createTextNode(alert ? 'part chez tout le monde, même ceux qui arriveront plus tard' : isPeerKey(current) ? 'chiffré' : 'visible par tous'),
+    document.createTextNode(
+      locked
+        ? 'vérifiez ce contact en personne (« vérifier › ») pour échanger des messages privés'
+        : alert
+          ? 'part chez tout le monde, même ceux qui arriveront plus tard'
+          : isPeerKey(current)
+            ? 'chiffré'
+            : 'visible par tous',
+    ),
   );
-  if (!alert) hint.append(span('kb', ' · entrée envoie, maj+entrée saute une ligne, coller ou déposer une image pour la joindre'));
+  if (!alert && !locked) hint.append(span('kb', ' · entrée envoie, maj+entrée saute une ligne, coller ou déposer une image pour la joindre'));
   syncSend();
 }
 
@@ -513,8 +536,13 @@ function renderChat(forceBottom = false): void {
       e.append(span('t', 'aucune alerte'));
       e.append(el('div', undefined, 'Une alerte est signée et prioritaire. Les relais la portent 24 h : même ceux qui arrivent plus tard la reçoivent.'));
     } else {
-      e.append(span('t', `dites bonjour à ${labelOf(current)}`));
-      e.append(el('div', undefined, 'Vos messages sont chiffrés. Hors de portée, un relais les porte jusqu’au retour, et vous voyez où ils en sont : en transit, remis, lu.'));
+      if (canWrite(current)) {
+        e.append(span('t', `dites bonjour à ${labelOf(current)}`));
+        e.append(el('div', undefined, 'Vos messages sont chiffrés. Hors de portée, un relais les porte jusqu’au retour, et vous voyez où ils en sont : en transit, remis, lu.'));
+      } else {
+        e.append(span('t', `${labelOf(current)} n’est pas vérifié`));
+        e.append(el('div', undefined, 'Les messages privés sont réservés aux contacts vérifiés en personne : touchez « vérifier › », puis montrez votre code ou scannez le sien. Le canal public reste ouvert à tous.'));
+      }
     }
     log.append(e);
   }
@@ -1147,7 +1175,7 @@ function updateTitle(): void {
 function submit(): void {
   const input = $<HTMLTextAreaElement>('text');
   const text = input.value.trim();
-  if (!text) return;
+  if (!text || !canWrite(current)) return;
   const base = { mine: true, from: node.nickname, text, at: Date.now() };
   if (current === PUBLIC) {
     node.sendBroadcast(text);
@@ -1189,6 +1217,7 @@ async function attach(f: File): Promise<void> {
   }
   if (blob.size > MAX_ATTACHMENT - 4096) return fail(`Fichier trop gros (${size(blob.size)}) : 2 Mo maximum. Réduisez-le puis réessayez.`);
   const key = current;
+  if (!canWrite(key)) return;
   const data = new Uint8Array(await blob.arrayBuffer());
   let id: string;
   try {
@@ -1314,7 +1343,7 @@ function start(nickname: string): void {
   });
   // peers reached through relays only stay visible if we keep announcing ourselves
   setInterval(() => net?.running && node.announce(), 5 * 60 * 1000);
-  node = new ChaxNode({ transport, identity, nickname });
+  node = new ChaxNode({ transport, identity, nickname, acceptDirect: (from) => !!trust[from] });
   node.loadSessions(load('chax.sessions') ?? {});
   let sessionSave: number | undefined;
   node.onSessionsChanged(() => {

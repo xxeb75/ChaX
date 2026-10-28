@@ -80,6 +80,8 @@ export interface NodeOptions {
   clock?: Clock;
   rng?: () => number;
   storeQuotaBytes?: number;
+  /** Direct messages and files from peers this says no to are dropped unread and unacknowledged. */
+  acceptDirect?: (from: string) => boolean;
 }
 
 export class ChaxNode {
@@ -104,8 +106,11 @@ export class ChaxNode {
   private readonly sessions = new Map<string, ratchet.Session[]>(); // peerId hex -> double-ratchet sessions, newest last
   private sessionHandlers: (() => void)[] = [];
 
+  private readonly acceptDirect?: (from: string) => boolean;
+
   constructor(opts: NodeOptions) {
     this.transport = opts.transport;
+    this.acceptDirect = opts.acceptDirect;
     this.identity = opts.identity ?? createIdentity();
     this.nickname = opts.nickname ?? 'anon';
     this.clock = opts.clock ?? systemClock;
@@ -424,6 +429,7 @@ export class ChaxNode {
         if (isBroadcast(p.dst)) {
           this.deliver(p, p.payload, false);
         } else if (equal(p.dst, this.identity.peerId)) {
+          if (this.acceptDirect && !this.acceptDirect(srcHex)) return; // not a contact: no decryption, no receipt, so the sender is not told it arrived
           const plain =
             p.flags & Flags.RATCHET ? this.decryptFrom(srcHex, p.payload) : p.flags & Flags.ENCRYPTED ? open(this.identity, p.payload) : p.payload;
           if (plain) {
@@ -485,6 +491,7 @@ export class ChaxNode {
     if (a.parts.size < total) return;
 
     this.assemblies.delete(hex);
+    if (a.direct && this.acceptDirect && !this.acceptDirect(a.from)) return;
     const blob = concat(...Array.from({ length: total }, (_, i) => a.parts.get(i)!));
     const plain = a.direct ? this.decryptFrom(a.from, blob) ?? open(this.identity, blob) : blob;
     const file = plain && decodeBlob(plain);

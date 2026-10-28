@@ -272,6 +272,25 @@ describe('store-and-forward', () => {
     expect(delivered).toEqual([toHex(id)]);
   });
 
+  it('drops direct messages from peers the receiver does not accept, without acknowledging them', () => {
+    const net = new SimNetwork({ seed: 7 });
+    const mk = (name: string, acceptDirect?: (from: string) => boolean) =>
+      new ChaxNode({ transport: net.createTransport(name), nickname: name, clock: net, rng: net.rng, acceptDirect });
+    const a = mk('n0');
+    const b = mk('n1', () => false);
+    const got: ChatMessage[] = [];
+    b.onMessage((m) => got.push(m));
+    const delivered: string[] = [];
+    a.onDelivered((id) => delivered.push(id));
+    net.link('n0', 'n1');
+    net.run(1000);
+    a.sendDirect(b.peerId, 'bonjour');
+    a.sendBroadcast('salut tout le monde');
+    net.run(1000);
+    expect(got.map((m) => m.text)).toEqual(['salut tout le monde']); // public stays open
+    expect(delivered).toEqual([]);
+  });
+
   it('tells the sender when the recipient has read a message, even if they meet later', () => {
     const r = rig(3);
     chain(r);

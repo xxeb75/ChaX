@@ -58,6 +58,8 @@ function run(nickname: string): void {
     ]),
     identity,
     nickname,
+    // only verified contacts may write to us; the visible page records the verifications
+    acceptDirect: (from) => !!(load<Record<string, unknown>>('chax.trust') ?? {})[from],
   });
   node.loadSessions(load('chax.sessions') ?? {});
   // saved at once: this page can be destroyed the moment the user opens the app

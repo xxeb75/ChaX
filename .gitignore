@@ -4,3 +4,5 @@ dist/
 .gradle/
 local.properties
 release/
+packages/windows/bin/
+packages/windows/obj/

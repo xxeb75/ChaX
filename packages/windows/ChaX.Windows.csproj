@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>Chax</RootNamespace>
+    <AssemblyName>ChaX</AssemblyName>
+    <Version>0.2.1</Version>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2792.45" />
+  </ItemGroup>
+
+  <!-- The web app (packages/chat-web, built with `vite build`) ships next to the executable. -->
+  <ItemGroup>
+    <Content Include="..\chat-web\dist\**\*" LinkBase="web" CopyToOutputDirectory="PreserveNewest" Condition="Exists('..\chat-web\dist')" />
+  </ItemGroup>
+
+</Project>

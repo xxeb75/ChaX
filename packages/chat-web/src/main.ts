@@ -13,6 +13,7 @@ import {
   type ChatMessage,
   type Transport,
 } from '../../core/src';
+import { windowsBridge, windowsHost } from './windows';
 import { VERSION, autoCheck, check, checkOnLaunch, setAutoCheck, type Update } from './update';
 import { encodeCode, parseCode, qrElement, scanCamera, type Trusted } from './verify';
 import { ALERTS, MAX_LINES, IMAGE_MIMES, PUBLIC, cap, idb, load, loadIdentity, loadNet, native, putFile, save, type Line, type Status } from './store';
@@ -80,6 +81,7 @@ for (const list of Object.values(history)) {
   for (const l of list) if ((l.status as string) === 'sent') l.status = 'transit'; // older builds
 }
 const trust: Record<string, Trusted> = load('chax.trust') ?? {}; // peers whose code we scanned in person
+const hidden: Record<string, true> = load('chax.hidden') ?? {}; // contacts the user deleted: out of the list until they write again
 const unread: Record<string, number> = load('chax.unread') ?? {}; // the headless node counts messages while the app is closed
 const incoming = new Map<string, Incoming>(); // object id -> transfer in progress
 const STALL_MS = 15_000;
@@ -170,6 +172,10 @@ function flash(msg: string): void {
 function push(conv: string, line: Line): void {
   const list = (history[conv] ??= []);
   list.push(line);
+  if (!line.mine && hidden[conv]) {
+    delete hidden[conv];
+    save('chax.hidden', hidden);
+  }
   if (list.length > MAX_LINES) {
     const old = list.shift()!;
     if (old.file && old.id) void dropFile(old.id);
@@ -290,7 +296,7 @@ function buildRows(): Row[] {
   }
   if (renamed) save('chax.names', Object.fromEntries(names));
 
-  const peerKeys = [...new Set([...node.peers.keys()].filter((k) => k !== node.peerId).concat(Object.keys(history).filter(isPeerKey)))];
+  const peerKeys = [...new Set([...node.peers.keys()].filter((k) => k !== node.peerId).concat(Object.keys(history).filter(isPeerKey)))].filter((k) => !hidden[k] || history[k]?.length);
   const rows: Row[] = [PUBLIC, ALERTS, ...peerKeys].map((k) => ({
     k,
     label: labelOf(k),
@@ -422,6 +428,10 @@ function header(): void {
   $('title').textContent = current === PUBLIC ? 'public' : current === ALERTS ? 'alertes' : labelOf(current);
   const sub = $('sub');
   sub.replaceChildren();
+  const del = $<HTMLButtonElement>('delBtn');
+  del.textContent = isPeerKey(current) ? 'supprimer' : 'vider';
+  del.setAttribute('aria-label', isPeerKey(current) ? `Supprimer la conversation avec ${labelOf(current)}` : `Vider la conversation ${current === ALERTS ? 'des alertes' : 'publique'}`);
+  del.classList.toggle('hide', !(history[current]?.length || isPeerKey(current)));
   const vbtn = $<HTMLButtonElement>('vbtn');
   vbtn.classList.toggle('hide', !isPeerKey(current));
   if (isPeerKey(current)) {
@@ -634,6 +644,91 @@ function lightbox(id: string, name: string, bytes: number): void {
     document.body.append(o);
     x.focus();
   });
+}
+
+/** Removes a conversation from this device: messages, attachments, unread count and, for a contact, the verified mark. */
+function deleteConversation(key: string): void {
+  for (const l of history[key] ?? []) if (l.file && l.id) void dropFile(l.id);
+  delete history[key];
+  unread[key] = 0;
+  persist();
+  save('chax.unread', unread);
+  for (const [id, t] of incoming) if (t.key === key) incoming.delete(id);
+  if (isPeerKey(key)) {
+    delete trust[key];
+    save('chax.trust', trust);
+    hidden[key] = true;
+    save('chax.hidden', hidden);
+  }
+  listSig = '';
+  if (isPeerKey(key)) {
+    if (wide()) open(PUBLIC);
+    else backToList();
+  } else renderChat(true);
+  renderList();
+  header();
+}
+
+/** Asks before deleting: it cannot be undone and the other side keeps its own copy. */
+function deleteDialog(key: string): void {
+  const back = document.activeElement as HTMLElement | null;
+  const peer = isPeerKey(key);
+  const o = el('div', 'lightbox verify');
+  o.setAttribute('role', 'dialog');
+  o.setAttribute('aria-modal', 'true');
+  o.setAttribute('aria-label', peer ? 'Supprimer la conversation' : 'Vider la conversation');
+  const bar = el('div', 'bar');
+  const x = el('button', undefined, 'fermer ×');
+  x.type = 'button';
+  bar.append(span('', peer ? `supprimer ${labelOf(key)}` : 'vider la conversation'), x);
+  const n = history[key]?.length ?? 0;
+  const body = el('div', 'vbody');
+  const intro = el(
+    'p',
+    'vintro',
+    peer
+      ? `Les ${n} message${n > 1 ? 's' : ''} et les pièces jointes échangés avec ${labelOf(key)} seront effacés de cet appareil${isVerified(key) ? ', ainsi que sa vérification' : ''}. Cela ne peut pas être annulé, et ${labelOf(key)} garde sa propre copie. Il réapparaîtra dans la liste s’il vous écrit.`
+      : `Les ${n} message${n > 1 ? 's' : ''} ${key === ALERTS ? 'd’alertes' : 'du canal public'} seront effacés de cet appareil. Cela ne peut pas être annulé ; les autres gardent les leurs.`,
+  );
+  const act = el('div', 'vact');
+  const yes = el('button', 'danger', peer ? 'supprimer ›' : 'vider ›');
+  yes.type = 'button';
+  const no = el('button', undefined, 'annuler');
+  no.type = 'button';
+  act.append(no, yes);
+  body.append(intro, act);
+  o.append(bar, body);
+
+  const shut = () => {
+    if (closeLightbox !== shut) return;
+    closeLightbox = undefined;
+    o.remove();
+    document.removeEventListener('keydown', onKey, true);
+    back?.focus?.();
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      window.history.state?.lb ? window.history.back() : shut();
+    }
+  };
+  closeLightbox = shut;
+  try {
+    window.history.pushState({ ...(window.history.state ?? {}), lb: true }, '');
+  } catch {
+    /* ignore */
+  }
+  document.addEventListener('keydown', onKey, true);
+  const close = () => (window.history.state?.lb ? window.history.back() : shut());
+  x.onclick = close;
+  no.onclick = close;
+  yes.onclick = () => {
+    close();
+    deleteConversation(key);
+    flash(peer ? 'conversation supprimée' : 'conversation vidée');
+  };
+  document.body.append(o);
+  no.focus();
 }
 
 /** The banner at the top of the list when a newer build exists. It opens the download in the browser. */
@@ -1077,6 +1172,7 @@ document.addEventListener('keydown', (ev) => {
 $('fp').onclick = () => verifyDialog();
 $('netBtn').onclick = () => netDialog();
 $('vbtn').onclick = () => verifyDialog(current);
+$('delBtn').onclick = () => deleteDialog(current);
 document.addEventListener('visibilitychange', () => {
   if (viewing()) {
     unread[current] = 0;
@@ -1123,6 +1219,8 @@ function start(nickname: string): void {
   }
   const identity = loadIdentity();
   if (native && cap?.Plugins?.ChaxBle) ble = new BleTransport(capacitorBridge(cap.Plugins.ChaxBle));
+  const winHost = windowsHost();
+  if (winHost) ble = new BleTransport(windowsBridge(winHost));
   // The radio (or, in a browser, other tabs / the dev relay) plus the optional internet fallback. A browser cannot
   // speak Bluetooth, so for a PC the fallback is how it meets the phones.
   const cfg = loadNet();

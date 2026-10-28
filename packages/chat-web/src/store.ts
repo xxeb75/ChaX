@@ -27,7 +27,9 @@ export const IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp', 'im
 
 export const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean; Plugins?: Record<string, any> } }).Capacitor;
 export const native = !!cap?.isNativePlatform?.() || !!(window as unknown as { ChaxNative?: unknown }).ChaxNative;
-const store = (): Storage => (native ? localStorage : sessionStorage);
+// A browser tab forgets everything on close; the phone app and the Windows app keep their identity and history.
+const persistent = native || (window as unknown as { __chaxHost?: string }).__chaxHost === 'windows';
+const store = (): Storage => (persistent ? localStorage : sessionStorage);
 
 export function load<T>(key: string): T | undefined {
   try {

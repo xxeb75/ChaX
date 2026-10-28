@@ -79,7 +79,7 @@
     #side { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--dust-1); padding-top: var(--top); }
     .top { padding: 4px 20px 0; }
     .id { display: flex; align-items: baseline; gap: 12px; min-height: 44px; }
-    .id .cat { flex: none; align-self: center; color: var(--ivory); }
+    .id .cat { flex: none; align-self: flex-start; margin-top: 1px; color: var(--amber); }
     .id .wm { font-size: var(--fs-mid); letter-spacing: .02em; }
     .id .fp { font-size: var(--fs-dust); color: var(--dust-3); min-height: 44px; display: inline-flex; align-items: baseline; gap: 8px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .id .fp:hover { color: var(--ivory); }
@@ -136,6 +136,9 @@
     .chead .line2 > :last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .vbtn { margin-left: auto; flex: none; min-height: 44px; padding: 0 4px; font-size: var(--fs-rear); color: var(--dust-3); }
     .vbtn:hover { color: var(--amber); }
+    .vbtn.del { margin-left: 0; }
+    .vbtn.hide + .vbtn.del { margin-left: auto; }
+    .verify .vact button.danger { color: var(--amber); }
     .vbtn.ok { color: var(--ivory); }
     .row .chk { color: var(--ivory); flex: none; }
     .row .warnmark { color: var(--amber); flex: none; }
@@ -279,6 +282,7 @@
           <button id="back" type="button" aria-label="Retour aux conversations">‹</button>
           <h2 id="title"></h2>
           <button id="vbtn" class="vbtn hide" type="button"></button>
+          <button id="delBtn" class="vbtn del hide" type="button"></button>
         </div>
         <div class="line2" id="sub"></div>
       </header>

@@ -88,8 +88,6 @@ const incoming = new Map<string, Incoming>(); // object id -> transfer in progre
 const STALL_MS = 15_000;
 const names = new Map<string, string>(Object.entries(load<Record<string, string>>('chax.names') ?? {}));
 let current = PUBLIC;
-let cursor = PUBLIC; // keyboard cursor in the list
-let query = '';
 let node: ChaxNode;
 let relay: WebSocketTransport | undefined;
 let ble: BleTransport | undefined;
@@ -134,7 +132,6 @@ function dayLabel(t: number): string {
 }
 
 const spaced = (hex: string) => hex.replace(/(.{4})/g, '$1 ').trim();
-const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const neighborIds = () => new Set(node.neighbors.values());
 /** Neighbours reached by radio, as opposed to the ones only reachable through the internet relays. */
 const rangeIds = () => new Set([...node.neighbors].filter(([l]) => !l.startsWith('net|')).map(([, p]) => p));
@@ -260,11 +257,24 @@ function renderSonde(): void {
     txt = [range ? `${range} à portée` : '', viaNet ? `${viaNet} par internet` : ''].filter(Boolean).join(' · ');
     if (carried) txt += ` · ${carried} porté${carried > 1 ? 's' : ''}`;
   } else txt = net?.running ? (net.connected ? 'personne · internet actif' : 'internet : connexion…') : 'personne à portée';
+  // the two links at a glance: amber carries messages now, pale is listening, dark is off
   const nb = document.getElementById('netBtn');
   if (nb) {
     nb.classList.toggle('hide', !net);
-    const t = net?.running ? 'internet ●' : 'internet ›';
-    if (nb.textContent !== t) nb.textContent = t;
+    const bt = nb.querySelector<SVGElement>('.bt')!;
+    const gl = nb.querySelector<SVGElement>('.gl')!;
+    bt.classList.toggle('hide', !ble);
+    const btS = !ble || bleError ? 'off' : range ? 'live' : 'idle';
+    const glS = net?.running ? (net.connected ? 'live' : 'idle') : 'off';
+    bt.dataset.s = btS;
+    gl.dataset.s = glS;
+    const btT = !ble ? '' : bleError ? 'Bluetooth indisponible' : range ? `Bluetooth : ${range} à portée` : 'Bluetooth : personne à portée';
+    const glT = net?.running ? (net.connected ? `Internet : actif${viaNet ? `, ${viaNet} joint${viaNet > 1 ? 's' : ''} par ce canal` : ''}` : 'Internet : connexion aux relais…') : 'Internet : en veille';
+    const label = [btT, glT].filter(Boolean).join(' · ');
+    if (nb.getAttribute('aria-label') !== label) {
+      nb.setAttribute('aria-label', `${label}. Ouvrir les réglages`);
+      nb.title = label;
+    }
   }
   if ($('meshTxt').textContent !== txt) $('meshTxt').textContent = txt;
 }
@@ -314,17 +324,15 @@ function buildRows(): Row[] {
       Number(b.on ?? false) - Number(a.on ?? false) ||
       a.label.localeCompare(b.label),
   );
-  const q = fold(query.trim());
-  return q ? rows.filter((r) => fold(r.label).includes(q)) : rows;
+  return rows;
 }
 
 let listSig = '';
 function renderList(): void {
   renderSonde();
   const rows = buildRows();
-  const typing = document.activeElement === $('q');
-  const highlighted = typing ? cursor : wide() ? current : '';
-  const sig = JSON.stringify([rows, highlighted, current, query]);
+  const highlighted = wide() ? current : '';
+  const sig = JSON.stringify([rows, highlighted, current]);
   $('count').textContent = String(rows.length);
   if (sig === listSig) return;
   listSig = sig;
@@ -377,7 +385,6 @@ function rowEl(r: Row, i: number, selected: boolean): HTMLButtonElement {
 function open(key: string): void {
   const wasList = $('app').dataset.view === 'list';
   current = key;
-  cursor = key;
   unread[key] = 0;
   stick = true;
   $('app').dataset.view = 'chat';
@@ -1127,48 +1134,6 @@ $('text').addEventListener('keydown', (ev) => {
   } else if (e.key === 'Escape') {
     ($('text') as HTMLTextAreaElement).blur();
     if (!wide()) $('back').click();
-  }
-});
-
-$('q').addEventListener('input', () => {
-  query = ($('q') as HTMLInputElement).value;
-  const rows = buildRows();
-  if (rows.length && !rows.some((r) => r.k === cursor)) cursor = rows[0]!.k;
-  renderList();
-});
-$('q').addEventListener('focus', () => renderList());
-$('q').addEventListener('blur', () => renderList());
-$('q').addEventListener('keydown', (ev) => {
-  const e = ev as KeyboardEvent;
-  const rows = buildRows();
-  const i = Math.max(0, rows.findIndex((r) => r.k === cursor));
-  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-    e.preventDefault();
-    const n = rows[Math.min(rows.length - 1, Math.max(0, i + (e.key === 'ArrowDown' ? 1 : -1)))];
-    if (n) cursor = n.k;
-    renderList();
-    $('convs').querySelector<HTMLElement>('.selected')?.scrollIntoView({ block: 'nearest' });
-  } else if (e.key === 'Enter') {
-    e.preventDefault();
-    const target = rows.find((r) => r.k === cursor) ?? rows[0];
-    if (target) {
-      ($('q') as HTMLInputElement).value = '';
-      query = '';
-      open(target.k);
-    }
-  } else if (e.key === 'Escape') {
-    ($('q') as HTMLInputElement).value = '';
-    query = '';
-    ($('q') as HTMLInputElement).blur();
-    renderList();
-  }
-});
-document.addEventListener('keydown', (ev) => {
-  const t = ev.target as HTMLElement;
-  if (ev.key === '/' && t.tagName !== 'INPUT' && t.tagName !== 'TEXTAREA') {
-    ev.preventDefault();
-    if (!wide() && $('app').dataset.view !== 'list') $('back').click();
-    $('q').focus();
   }
 });
 

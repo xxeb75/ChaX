@@ -89,15 +89,18 @@
     .sondeLine { display: flex; align-items: baseline; gap: 12px; min-height: 28px; font-size: var(--fs-rear); color: var(--dust-3); }
     .upd { min-height: 44px; width: 100%; text-align: left; font-size: var(--fs-rear); color: var(--amber); }
     .upd:hover { color: var(--ivory); }
-    .netBtn { margin-left: auto; flex: none; min-height: 44px; padding: 0 4px; font-size: var(--fs-rear); color: var(--dust-3); }
-    .netBtn:hover { color: var(--amber); }
+    .links { display: inline-flex; align-self: flex-start; align-items: center; gap: 10px; flex: none; min-height: 44px; min-width: 44px; justify-content: center; padding: 0 4px; margin-left: auto; margin-top: -10px; }
+    .id #flash:not(:empty) + .links { margin-left: 12px; }
+    .links svg { display: block; flex: none; }
+    .links [data-s="live"] { color: var(--amber); }
+    .links [data-s="idle"] { color: var(--ivory-2); }
+    .links [data-s="off"] { color: var(--dust-2); }
+    .links:hover svg[data-s] { color: var(--ivory); }
     .sonde { display: inline-flex; gap: 3px; letter-spacing: 0; color: var(--dust-3); flex: none; }
     .sonde i { font-style: normal; display: inline-block; }
     .sonde i.on { color: var(--ivory); }
     .sonde.ping i { animation: blip .7s var(--ease) both; animation-delay: calc(var(--i) * 45ms); }
     @keyframes blip { 0% { transform: translateY(0); color: var(--ivory); } 35% { transform: translateY(-3px); color: var(--ivory); } 100% { transform: translateY(0); } }
-    .q { margin-top: 18px; }
-    .q input { font-size: var(--fs-mid); }
     .groupbar { display: flex; justify-content: space-between; padding: 22px 20px 6px; font-size: var(--fs-dust); text-transform: uppercase; letter-spacing: .12em; color: var(--dust-3); }
 
     #convs { flex: 1; overflow-y: auto; padding: 0 8px calc(var(--bottom) + 8px); overscroll-behavior: contain; }
@@ -267,10 +270,10 @@
           <span class="wm" id="meName"></span>
           <button class="fp" id="fp" type="button" aria-label="Ouvrir mon code pour me faire vérifier en personne"><span id="meFp"></span><span class="act" aria-hidden="true">mon code ›</span></button>
           <span id="flash" role="status" aria-live="polite"></span>
+          <button id="netBtn" class="links hide" type="button" aria-label="Liaisons : réglages"><svg class="bt" data-s="off" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true" focusable="false"><path d="M7 7.5l10 9-5 4.5V3l5 4.5-10 9"/></svg><svg class="gl" data-s="off" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3.2 3 3.2 15 0 18M12 3c-3.2 3-3.2 15 0 18"/></svg></button>
         </div>
-        <div class="sondeLine"><span class="sonde" id="sonde" aria-hidden="true"></span><span id="meshTxt"></span><button id="netBtn" class="netBtn hide" type="button" aria-label="Repli par internet : réglages"></button></div>
+        <div class="sondeLine"><span class="sonde" id="sonde" aria-hidden="true"></span><span id="meshTxt"></span></div>
         <button id="upd" class="upd hide" type="button"></button>
-        <label class="qline q"><span class="car" aria-hidden="true">›</span><span class="sr">Filtrer les conversations</span><input id="q" type="text" placeholder="chercher, entrée pour ouvrir" enterkeyhint="go" autocomplete="off" spellcheck="false" /></label>
       </div>
       <div class="groupbar"><span>conversations</span><span id="count" class="tnum"></span></div>
       <nav id="convs" aria-label="Liste des conversations"></nav>

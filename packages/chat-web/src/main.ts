@@ -310,7 +310,7 @@ function buildRows(): Row[] {
   }
   if (renamed) save('chax.names', Object.fromEntries(names));
 
-  const peerKeys = [...new Set([...node.peers.keys()].filter((k) => k !== node.peerId).concat(Object.keys(history).filter(isPeerKey)))].filter((k) => !hidden[k] || history[k]?.length);
+  const peerKeys = [...new Set([...node.peers.keys()].filter((k) => k !== node.peerId).concat(Object.keys(history).filter(isPeerKey), Object.keys(trust).filter(isPeerKey)))].filter((k) => !hidden[k] || history[k]?.length);
   const rows: Row[] = [PUBLIC, ALERTS, ...peerKeys].map((k) => ({
     k,
     label: labelOf(k),
@@ -449,7 +449,7 @@ function header(): void {
   const delLabel = isPeerKey(current) ? `Supprimer la conversation avec ${labelOf(current)}` : `Vider la conversation ${current === ALERTS ? 'des alertes' : 'publique'}`;
   del.setAttribute('aria-label', delLabel);
   del.title = delLabel;
-  del.classList.toggle('hide', !(history[current]?.length || isPeerKey(current)));
+  del.classList.toggle('hide', !isPeerKey(current)); // the public channel and the alerts stay: they cannot be deleted
   const vbtn = $<HTMLButtonElement>('vbtn');
   vbtn.classList.toggle('hide', !isPeerKey(current));
   if (isPeerKey(current)) {
@@ -954,6 +954,10 @@ function verifyDialog(focus?: string): void {
     }
     trust[c.peerId] = { name: c.name, at: Date.now() };
     save('chax.trust', trust);
+    if (hidden[c.peerId]) {
+      delete hidden[c.peerId];
+      save('chax.hidden', hidden);
+    }
     if (!names.has(c.peerId)) {
       names.set(c.peerId, c.name);
       save('chax.names', Object.fromEntries(names));

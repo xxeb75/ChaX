@@ -90,19 +90,18 @@
     .id #flash { margin-left: auto; font-size: var(--fs-dust); color: var(--ivory); }
     .sondeLine { display: flex; align-items: baseline; gap: 12px; min-height: 28px; font-size: var(--fs-rear); color: var(--dust-3); }
     .sondeLine #meshTxt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .sondeLine .act { margin-left: auto; flex: none; min-height: 44px; margin-top: -8px; margin-bottom: -8px; color: var(--dust-3); font-size: var(--fs-rear); }
-    .sondeLine .act:hover { color: var(--amber); }
     .upd { min-height: 44px; width: 100%; text-align: left; font-size: var(--fs-rear); color: var(--amber); }
     .upd:hover { color: var(--ivory); }
-    .links { display: inline-flex; align-self: flex-start; align-items: center; gap: 10px; flex: none; min-height: 44px; min-width: 44px; justify-content: center; padding: 0 4px; margin-left: auto; margin-top: -10px; }
+    .links { display: inline-flex; align-self: flex-start; align-items: center; gap: 10px; flex: none; min-height: 44px; justify-content: center; padding: 0 4px; margin-left: auto; margin-top: -10px; }
     .id #flash:not(:empty) + .links { margin-left: 12px; }
+    .gear { flex: none; align-self: flex-start; display: grid; place-items: center; min-height: 44px; min-width: 44px; margin: -10px -10px 0 0; color: var(--dust-3); }
+    .gear:hover { color: var(--amber); }
     .links svg { display: block; flex: none; }
     .links [data-s="live"] { color: var(--amber); }
     .links [data-s="idle"] { color: var(--ivory-2); }
     .links [data-s="off"] { color: var(--dust-3); }
     .links .x { display: none; }
     .links [data-s="off"] .x { display: inline; }
-    .links:hover svg[data-s] { color: var(--ivory); }
     .sonde { display: inline-flex; gap: 3px; letter-spacing: 0; color: var(--dust-3); flex: none; }
     .sonde i { font-style: normal; display: inline-block; }
     .sonde i.on { color: var(--ivory); }
@@ -299,10 +298,11 @@
           <svg class="cat" viewBox="0 0 16 16" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M2 1.5 6 5h4l4-3.5V9c0 3.5-2.7 5.5-6 5.5S2 12.5 2 9z"/><path fill="#0a0a0c" d="M5 8h2v2H5zM9 8h2v2H9z"/></svg>
           <span class="wm" id="meName"></span>
           <span id="flash" role="status" aria-live="polite"></span>
-          <button id="netBtn" class="links hide" type="button" aria-label="Liaisons : réglages"><svg class="bt" data-s="off" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true" focusable="false"><path d="M7 7.5l10 9-5 4.5V3l5 4.5-10 9"/><path class="x" d="M3.5 20.5 20.5 3.5"/></svg><svg class="gl" data-s="off" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3.2 3 3.2 15 0 18M12 3c-3.2 3-3.2 15 0 18"/><path class="x" d="M3.5 20.5 20.5 3.5"/></svg></button>
+          <span id="netBtn" class="links hide" role="img" aria-label="Liaisons"><svg class="bt" data-s="off" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true" focusable="false"><path d="M7 7.5l10 9-5 4.5V3l5 4.5-10 9"/><path class="x" d="M3.5 20.5 20.5 3.5"/></svg><svg class="gl" data-s="off" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3.2 3 3.2 15 0 18M12 3c-3.2 3-3.2 15 0 18"/><path class="x" d="M3.5 20.5 20.5 3.5"/></svg></span>
+          <button id="netLink" class="gear hide" type="button" aria-label="Paramètres" title="Paramètres"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1"/></svg></button>
         </div>
         <button class="fp" id="fp" type="button" aria-label="Ouvrir mon code pour me faire vérifier en personne"><span id="meFp"></span><span class="act" aria-hidden="true">mon code ›</span></button>
-        <div class="sondeLine"><span class="sonde" id="sonde" aria-hidden="true"></span><span id="meshTxt"></span><button class="act hide" id="netLink" type="button">liaisons ›</button></div>
+        <div class="sondeLine"><span class="sonde" id="sonde" aria-hidden="true"></span><span id="meshTxt"></span></div>
         <button id="upd" class="upd hide" type="button"></button>
       </div>
       <div class="groupbar"><span>conversations</span><span id="count" class="tnum"></span></div>

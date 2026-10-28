@@ -1,6 +1,6 @@
 # Publier une version de test
 
-L'app vérifie, au lancement (toutes les six heures au plus, désactivable dans « liaisons »), la dernière *Release* publique de `xxeb75/ChaX` sur GitHub. Si son numéro est plus grand que celui de l'APK installé, une fenêtre « version X disponible » propose le téléchargement, et un bandeau reste en haut de la liste.
+L'app vérifie, au lancement (toutes les six heures au plus, désactivable dans « paramètres » (engrenage en haut à droite)), la dernière *Release* publique de `xxeb75/ChaX` sur GitHub. Si son numéro est plus grand que celui de l'APK installé, une fenêtre « version X disponible » propose le téléchargement, et un bandeau reste en haut de la liste.
 
 ## Numéro de version
 

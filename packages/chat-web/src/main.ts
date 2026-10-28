@@ -273,7 +273,7 @@ function renderSonde(): void {
     const glT = net?.running ? (net.connected ? `Internet : actif${viaNet ? `, ${viaNet} joint${viaNet > 1 ? 's' : ''} par ce canal` : ''}` : 'Internet : connexion aux relais…') : 'Internet : en veille';
     const label = [btT, glT].filter(Boolean).join(' · ');
     if (nb.getAttribute('aria-label') !== label) {
-      nb.setAttribute('aria-label', `${label}. Ouvrir les réglages`);
+      nb.setAttribute('aria-label', label);
       nb.title = label;
     }
   }
@@ -816,11 +816,11 @@ function netDialog(): void {
   const o = el('div', 'lightbox verify netd');
   o.setAttribute('role', 'dialog');
   o.setAttribute('aria-modal', 'true');
-  o.setAttribute('aria-label', 'Liaisons : Bluetooth et internet');
+  o.setAttribute('aria-label', 'Paramètres');
   const bar = el('div', 'bar');
   const x = el('button', undefined, 'fermer ×');
   x.type = 'button';
-  bar.append(span('', 'liaisons'), x);
+  bar.append(span('', 'paramètres'), x);
   const body = el('div', 'vbody');
   const cfg = loadNet();
 
@@ -1246,7 +1246,6 @@ const convs = $('convs');
 convs.addEventListener('pointerdown', () => holdList(1500), { passive: true });
 convs.addEventListener('pointerup', () => (listHeld = 0), { passive: true });
 convs.addEventListener('scroll', () => holdList(500), { passive: true });
-$('netBtn').onclick = () => netDialog();
 $('netLink').onclick = () => netDialog();
 $('vbtn').onclick = () => verifyDialog(current);
 $('delBtn').onclick = () => deleteDialog(current);

@@ -16,6 +16,7 @@ import {
 import { windowsBridge, windowsHost } from './windows';
 import { VERSION, autoCheck, check, checkOnLaunch, setAutoCheck, type Update } from './update';
 import { encodeCode, parseCode, qrElement, scanCamera, type Trusted } from './verify';
+import { runFallback } from './fallback';
 import { ALERTS, MAX_LINES, IMAGE_MIMES, PUBLIC, cap, idb, load, loadIdentity, loadNet, native, putFile, save, type Line, type Status } from './store';
 
 interface Incoming {
@@ -755,26 +756,28 @@ function netDialog(): void {
   const state = el('p', 'vres');
   state.setAttribute('role', 'status');
   const cfg = loadNet();
+  const MODES: Record<string, string> = { auto: 'automatique', on: 'toujours actif', off: 'désactivé' };
   const draw = () => {
-    state.textContent = net!.running
+    const run = net!.running
       ? net!.connected
-        ? `Actif : ${net!.connected} relais sur ${net!.relayCount}.`
-        : 'Actif, connexion aux relais…'
-      : 'Désactivé : seul le Bluetooth est utilisé.';
-    sw.textContent = net!.running ? 'désactiver ›' : 'activer ›';
+        ? `internet actif (${net!.connected} relais sur ${net!.relayCount})`
+        : 'internet actif, connexion aux relais…'
+      : 'internet en veille, seul le Bluetooth est utilisé';
+    state.textContent = run;
+    sw.textContent = `mode : ${MODES[cfg.mode]} ›`;
   };
   const intro = el(
     'p',
     'vintro',
-    'Quand le Bluetooth ne porte plus, les messages peuvent passer par des relais Nostr publics. Le contenu reste chiffré de bout en bout (messages privés) et signé ; les relais voient seulement votre adresse IP, l’heure et la taille des paquets. Les messages du canal public, eux, sont lisibles par n’importe qui sur ces relais.',
+    'Le Bluetooth passe toujours en premier. En mode automatique, si personne n’est à portée depuis une trentaine de secondes, les messages passent par des relais Nostr publics, puis le Bluetooth reprend dès que des voisins sont revenus. Le contenu des messages privés reste chiffré de bout en bout et signé ; les relais voient seulement votre adresse IP, l’heure et la taille des paquets. Les messages du canal public sont lisibles par n’importe qui sur ces relais.',
   );
   const sw = el('button', undefined, '');
   sw.type = 'button';
   sw.onclick = () => {
-    if (net!.running) net!.stop();
-    else net!.start();
-    cfg.on = net!.running;
+    cfg.mode = cfg.mode === 'auto' ? 'on' : cfg.mode === 'on' ? 'off' : 'auto';
     save('chax.net', cfg);
+    if (cfg.mode === 'on' && !net!.running) net!.start();
+    else if (cfg.mode === 'off' && net!.running) net!.stop();
     draw();
     renderList();
   };
@@ -1230,7 +1233,12 @@ function start(nickname: string): void {
     { name: ble ? 'ble' : 'local', transport: ble ?? relay ?? new BroadcastChannelTransport() },
     { name: 'net', transport: net },
   ]);
-  if (cfg.on) net.start();
+  // Bluetooth first; the relays come on when nobody is in range (or always, or never, as the user chose)
+  runFallback(net, {
+    mode: () => loadNet().mode,
+    range: () => rangeIds().size,
+    viaNetOnly: () => neighborIds().size - rangeIds().size,
+  });
   // peers reached through relays only stay visible if we keep announcing ourselves
   setInterval(() => net?.running && node.announce(), 5 * 60 * 1000);
   node = new ChaxNode({ transport, identity, nickname });

@@ -1,4 +1,5 @@
 import { BleTransport, ChaxNode, DEFAULT_RELAYS, MultiTransport, NostrTransport, toHex, type BleBridge, type ChatMessage } from '../../core/src';
+import { runFallback } from './fallback';
 import { ALERTS, IMAGE_MIMES, MAX_LINES, PUBLIC, idb, load, loadIdentity, loadNet, putFile, save, type Line, type Status } from './store';
 
 /**
@@ -110,10 +111,14 @@ function run(nickname: string): void {
 
   ble.onError((m) => nat.log(`ble: ${m}`));
   void ble.start();
-  if (cfg.on) {
-    net.start();
-    setInterval(() => node.announce(), 5 * 60 * 1000); // keeps us visible to peers reached through the relays
-  }
+  // Bluetooth first; the relays come on when nobody is in range (or always, or never, as the user chose)
+  const radio = () => [...node.neighbors].filter(([l]) => l.startsWith('ble|')).map(([, p]) => p);
+  runFallback(net, {
+    mode: () => loadNet().mode,
+    range: () => new Set(radio()).size,
+    viaNetOnly: () => new Set([...node.neighbors.values()]).size - new Set(radio()).size,
+  });
+  setInterval(() => net.running && node.announce(), 5 * 60 * 1000); // keeps us visible to peers reached through the relays
   nat.log(`headless node up as ${nickname} ${node.peerId.slice(0, 8)}`);
 }
 

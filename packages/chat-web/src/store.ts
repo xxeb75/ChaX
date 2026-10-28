@@ -78,12 +78,15 @@ export async function idb<T>(mode: IDBTransactionMode, run: (s: IDBObjectStore) 
 }
 export const putFile = (id: string, b: Blob) => idb('readwrite', (s) => s.put(b, id)).catch(() => undefined);
 
-/** Optional internet fallback (Nostr relays). Off by default: ChaX needs no server, this is a choice. */
+/** Internet fallback (Nostr relays): "auto" switches it on when no Bluetooth peer is around, "on" always, "off" never. */
+export type NetMode = 'auto' | 'on' | 'off';
 export interface NetCfg {
-  on: boolean;
+  mode: NetMode;
   relays: string[];
 }
 export const loadNet = (): NetCfg => {
-  const c = load<Partial<NetCfg>>('chax.net');
-  return { on: !!c?.on, relays: Array.isArray(c?.relays) && c.relays.length ? c.relays : [] };
+  const c = load<{ mode?: NetMode; on?: boolean; relays?: string[] }>('chax.net');
+  // builds before the automatic mode stored an on/off flag
+  const mode: NetMode = c?.mode === 'on' || c?.mode === 'off' || c?.mode === 'auto' ? c.mode : c?.on ? 'on' : 'auto';
+  return { mode, relays: Array.isArray(c?.relays) && c.relays.length ? c.relays : [] };
 };

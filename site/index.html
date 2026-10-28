@@ -1,0 +1,679 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#0a0a0c" />
+  <title>ChaX : la messagerie qui marche sans réseau</title>
+  <meta name="description" content="ChaX envoie vos messages de téléphone en téléphone en Bluetooth, sans compte, sans serveur, chiffrés de bout en bout. Gratuit, pour Android." />
+  <meta property="og:title" content="ChaX : la messagerie qui marche sans réseau" />
+  <meta property="og:description" content="De téléphone en téléphone, en Bluetooth. Sans compte, sans serveur, chiffré. Gratuit." />
+  <meta property="og:type" content="website" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 fill=%27%230a0a0c%27/%3E%3Cpath fill=%27%23ffb000%27 d=%27M2 1.5 6 5h4l4-3.5V9c0 3.5-2.7 5.5-6 5.5S2 12.5 2 9z%27/%3E%3Cpath fill=%27%230a0a0c%27 d=%27M5 8h2v2H5zM9 8h2v2H9z%27/%3E%3C/svg%3E" />
+  <link rel="preload" href="fonts/JetBrainsMono-400.woff2" as="font" type="font/woff2" crossorigin />
+  <style>
+    @font-face {
+      font-family: 'JetBrains Mono';
+      font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: url('fonts/JetBrainsMono-400.woff2') format('woff2');
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    :root {
+      --void: #0a0a0c;
+      --void-2: #111114;
+      --dust-1: #38383e;
+      --dust-2: #5c5c64;
+      --dust-3: #8c8c93;
+      --ivory: #f1efe9;
+      --ivory-2: #c9c7c1;
+      --amber: #ffb000;
+      --mono: 'JetBrains Mono', 'Cascadia Code', ui-monospace, 'SFMono-Regular', Consolas, monospace;
+      --ease: cubic-bezier(.16, 1, .3, 1);
+      --gut: clamp(20px, 5vw, 72px);
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html { scroll-behavior: smooth; background: var(--void); }
+    body { margin: 0; background: var(--void); color: var(--ivory); font: 400 16px/1.55 var(--mono); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; overflow-x: hidden; }
+    ::selection { background: var(--amber); color: var(--void); }
+    :focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
+    a { color: inherit; text-decoration: none; }
+    * { scrollbar-width: thin; scrollbar-color: var(--dust-1) transparent; }
+    .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    .amber { color: var(--amber); }
+    .dim { color: var(--dust-3); }
+    .fill { flex: 1; min-width: 12px; border-bottom: 1px dotted var(--dust-2); transform: translateY(-.3em); }
+    h1, h2, h3, p { margin: 0; }
+    h1, h2 { font-weight: 400; }
+
+    /* reveal: content is visible without JS; the script arms it */
+    .js .rv { opacity: 0; transform: translateY(18px); transition: opacity .8s var(--ease), transform .8s var(--ease); transition-delay: calc(var(--d, 0) * 70ms); }
+    .js .rv.in { opacity: 1; transform: none; }
+
+    /* ---- bar ---- */
+    .bar { position: fixed; z-index: 20; inset: 0 0 auto 0; display: flex; align-items: center; gap: 18px; padding: max(env(safe-area-inset-top), 10px) var(--gut) 10px; transition: background .3s, border-color .3s; border-bottom: 1px solid transparent; }
+    .bar.solid { background: rgba(10, 10, 12, .92); border-color: var(--dust-1); }
+    .bar .brand { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; }
+    .bar .brand svg { color: var(--amber); }
+    .bar nav { margin-left: auto; display: flex; gap: 24px; align-items: center; font-size: 13px; color: var(--dust-3); }
+    .bar nav a { min-height: 44px; display: inline-flex; align-items: center; }
+    .bar nav a:hover { color: var(--ivory); }
+    .bar nav a.go { color: var(--amber); }
+    .bar nav a.go:hover { color: var(--ivory); }
+    @media (max-width: 640px) { .bar nav a:not(.go) { display: none; } }
+
+    /* ---- hero ---- */
+    #hero { position: relative; min-height: 100svh; display: grid; align-items: end; overflow: hidden; border-bottom: 1px solid var(--dust-1); }
+    #field { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: pan-y; cursor: crosshair; }
+    .status { position: absolute; z-index: 2; top: 78px; left: var(--gut); right: var(--gut); display: flex; gap: 14px; align-items: baseline; font-size: 12px; color: var(--dust-3); pointer-events: none; }
+    .status .bars { display: inline-flex; gap: 3px; align-items: flex-end; height: 12px; }
+    .status .bars i { width: 4px; background: var(--dust-2); }
+    .status .bars i:nth-child(1) { height: 4px; } .status .bars i:nth-child(2) { height: 6px; } .status .bars i:nth-child(3) { height: 9px; } .status .bars i:nth-child(4) { height: 12px; }
+    .status .x { color: var(--ivory-2); }
+    .status .r { margin-left: auto; }
+    .copy { position: relative; z-index: 2; padding: 0 var(--gut) clamp(40px, 9vh, 96px); max-width: 1500px; pointer-events: none; }
+    .copy > * { pointer-events: auto; }
+    .copy h1 { font-size: clamp(38px, 7.4vw, 118px); line-height: .98; letter-spacing: -.035em; max-width: 11.5ch; text-wrap: balance; text-shadow: 0 0 28px var(--void), 0 0 8px var(--void); }
+    .copy h1 .car { color: var(--amber); }
+    .copy h1 .car i { font-style: normal; animation: blink 1.1s steps(1) infinite; }
+    .copy h1 em { font-style: normal; color: var(--amber); }
+    .copy .lede { margin-top: 26px; max-width: 44ch; font-size: clamp(16px, 1.6vw, 20px); color: var(--ivory-2); text-wrap: pretty; text-shadow: 0 0 14px var(--void); }
+    .cta { margin-top: 34px; display: flex; flex-wrap: wrap; gap: 14px 28px; align-items: center; }
+    .btn { display: inline-flex; align-items: center; gap: 12px; min-height: 56px; padding: 0 26px; background: var(--amber); color: var(--void); font-size: 18px; transition: background .2s, transform .3s var(--ease); }
+    .btn:hover { background: var(--ivory); transform: translateY(-2px); }
+    .lnk { min-height: 48px; display: inline-flex; align-items: center; gap: 8px; color: var(--dust-3); font-size: 15px; }
+    .lnk:hover { color: var(--amber); }
+    .sim { position: absolute; z-index: 2; right: var(--gut); bottom: 18px; font-size: 12px; color: var(--dust-3); pointer-events: none; text-align: right; }
+    @keyframes blink { 50% { opacity: 0; } }
+    @media (max-width: 760px) { .sim { display: none; } .status .r { display: none; } }
+
+    /* ---- sections ---- */
+    section { position: relative; }
+    .wrap { padding: clamp(72px, 14vh, 160px) var(--gut); max-width: 1500px; margin: 0 auto; }
+    .tag { font-size: 13px; color: var(--amber); letter-spacing: .02em; margin-bottom: 18px; display: block; }
+    .h2 { font-size: clamp(28px, 4.4vw, 64px); line-height: 1.05; letter-spacing: -.03em; max-width: 18ch; text-wrap: balance; }
+    .lead { margin-top: 22px; max-width: 52ch; color: var(--ivory-2); font-size: clamp(16px, 1.4vw, 19px); text-wrap: pretty; }
+
+    /* ---- how: pinned map ---- */
+    #how { height: 480vh; border-bottom: 1px solid var(--dust-1); }
+    .pin { position: sticky; top: 0; height: 100svh; display: grid; grid-template-columns: minmax(300px, 5fr) minmax(0, 7fr); }
+    .steps { position: relative; padding: 110px 0 40px var(--gut); display: flex; flex-direction: column; justify-content: center; gap: 0; }
+    .steps .head { position: absolute; top: 88px; left: var(--gut); font-size: 13px; color: var(--amber); }
+    .step { padding: 18px 0 18px 26px; border-left: 1px dotted var(--dust-2); color: var(--dust-3); transition: color .4s, border-color .4s; position: relative; }
+    .step::before { content: ''; position: absolute; left: -4px; top: 31px; width: 7px; height: 7px; background: var(--void); border: 1px solid var(--dust-2); border-radius: 50%; transition: background .3s, border-color .3s; }
+    .step h2 { font-weight: 400; font-size: clamp(20px, 2.3vw, 32px); line-height: 1.1; letter-spacing: -.02em; }
+    .step p { max-height: 0; overflow: hidden; opacity: 0; font-size: 15px; max-width: 40ch; transition: max-height .6s var(--ease), opacity .5s, margin .4s; text-wrap: pretty; }
+    .step.on { color: var(--ivory); border-left-color: var(--amber); }
+    .step.on::before { background: var(--amber); border-color: var(--amber); }
+    .step.on p { max-height: 12em; opacity: 1; margin-top: 10px; color: var(--ivory-2); }
+    .step.done { color: var(--ivory-2); }
+    .step.done::before { border-color: var(--amber); }
+    .stage { position: relative; min-width: 0; }
+    #story { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .stage .cap { position: absolute; right: var(--gut); bottom: 22px; font-size: 12px; color: var(--dust-3); }
+    @media (max-width: 860px) {
+      #how { height: 520vh; }
+      .pin { grid-template-columns: minmax(0, 1fr); grid-template-rows: 58svh minmax(0, 1fr); }
+      .stage { grid-row: 1; } .steps { grid-row: 2; padding: 6px var(--gut) 0; justify-content: flex-start; background: var(--void); }
+      .steps .head { display: none; }
+      .step { padding: 10px 0 10px 22px; }
+      .step:not(.on) p { display: none; }
+      .step:not(.on) { display: none; }
+      .step.on { display: block; }
+      .step::before { top: 22px; }
+      .step h2 { font-size: 22px; }
+    }
+
+    /* ---- facts ---- */
+    #facts { border-bottom: 1px solid var(--dust-1); }
+    .fl { margin-top: clamp(36px, 7vh, 72px); display: grid; }
+    .fl .row { display: flex; align-items: baseline; gap: 18px; padding: 16px 0; font-size: clamp(18px, 2.8vw, 38px); letter-spacing: -.02em; line-height: 1.15; min-height: 64px; }
+    .fl .row .k { flex: none; }
+    .fl .row .v { flex: none; color: var(--dust-3); font-size: max(14px, .62em); letter-spacing: 0; text-align: right; max-width: 34ch; }
+    .fl .row:hover .v { color: var(--amber); }
+    .fl .row:hover .fill { border-color: var(--amber); }
+    @media (max-width: 760px) { .fl .row { flex-wrap: wrap; gap: 2px 14px; } .fl .row .fill { display: none; } .fl .row .v { text-align: left; max-width: none; flex-basis: 100%; } }
+
+    /* ---- demo chat ---- */
+    #demo { border-bottom: 1px solid var(--dust-1); }
+    .twocol { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: clamp(32px, 6vw, 96px); align-items: center; }
+    @media (max-width: 860px) { .twocol { grid-template-columns: minmax(0, 1fr); } }
+    .chat { border: 1px solid var(--dust-1); background: var(--void); min-height: 440px; padding: 18px clamp(14px, 3vw, 28px) 20px; display: flex; flex-direction: column; justify-content: flex-end; gap: 0; position: relative; }
+    .chat .hd { display: flex; justify-content: space-between; font-size: 12px; color: var(--dust-3); padding-bottom: 12px; border-bottom: 1px dotted var(--dust-2); margin-bottom: auto; }
+    .m { max-width: min(36ch, 84%); display: flex; flex-direction: column; margin-top: 18px; animation: arrive .5s var(--ease) both; }
+    .m .who { font-size: 12px; color: var(--dust-3); margin-bottom: 4px; }
+    .m .t { padding: 8px 12px; text-wrap: pretty; }
+    .m.theirs { align-self: flex-start; } .m.theirs .t { background: var(--dust-1); }
+    .m.mine { align-self: flex-end; align-items: flex-end; } .m.mine .t { background: var(--amber); color: var(--void); }
+    .m .st { font-size: 12px; color: var(--dust-3); margin-top: 3px; display: flex; gap: 8px; min-height: 18px; }
+    .m .st .g { letter-spacing: -.1em; }
+    .m .st.wait, .m .st.read { color: var(--ivory); }
+    .m.alert { align-self: stretch; max-width: none; background: var(--ivory); color: var(--void); padding: 10px 14px; }
+    .m.alert .who { color: var(--void); text-transform: uppercase; letter-spacing: .12em; }
+    .m.alert .t { padding: 0; background: none; }
+    .m.alert .st { color: var(--void); }
+    @keyframes arrive { from { opacity: 0; transform: translateY(10px); } }
+
+    /* ---- links ---- */
+    #links { border-bottom: 1px solid var(--dust-1); }
+    .pics { display: flex; gap: clamp(20px, 4vw, 56px); align-items: center; }
+    .pic { display: grid; place-items: center; gap: 12px; color: var(--dust-3); transition: color .5s; }
+    .pic svg { width: clamp(64px, 9vw, 120px); height: auto; display: block; }
+    .pic b { font-weight: 400; font-size: 13px; }
+    .pic[data-s="live"] { color: var(--amber); }
+    .pic[data-s="idle"] { color: var(--ivory-2); }
+    .pic .x { display: none; }
+    .pic[data-s="off"] .x { display: inline; }
+    .pic .ring { transform-origin: center; }
+    .pic[data-s="live"] .ring { animation: pulse 2.2s var(--ease) infinite; }
+    @keyframes pulse { 0% { opacity: .8; transform: scale(1); } 100% { opacity: 0; transform: scale(1.5); } }
+    .lstate { margin-top: 26px; font-size: clamp(16px, 1.6vw, 22px); min-height: 3.2em; color: var(--ivory); }
+    .lstate small { display: block; font-size: 14px; color: var(--dust-3); margin-top: 4px; }
+    .fine { margin-top: 26px; max-width: 54ch; color: var(--dust-3); font-size: 14px; text-wrap: pretty; }
+
+    /* ---- download ---- */
+    #telecharger { border-bottom: 1px solid var(--dust-1); }
+    #telecharger .h2 { font-size: clamp(40px, 8.6vw, 132px); max-width: 12ch; letter-spacing: -.04em; }
+    .dl { margin-top: clamp(32px, 6vh, 56px); display: flex; flex-wrap: wrap; gap: 14px 28px; align-items: center; }
+    .btn.big { min-height: 72px; padding: 0 36px; font-size: clamp(18px, 2vw, 26px); }
+    .meta { font-size: 14px; color: var(--dust-3); }
+    .inst { margin-top: clamp(40px, 8vh, 80px); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 36px; max-width: 1100px; }
+    .inst li { list-style: none; border-top: 1px dotted var(--dust-2); padding-top: 14px; color: var(--ivory-2); text-wrap: pretty; }
+    .inst li b { display: block; font-weight: 400; color: var(--amber); margin-bottom: 6px; font-size: 13px; }
+    .inst { margin-bottom: 0; padding: 0; }
+    @media (max-width: 760px) { .inst { grid-template-columns: minmax(0, 1fr); gap: 20px; } }
+    .other { margin-top: clamp(36px, 6vh, 64px); display: grid; gap: 4px; font-size: 14px; color: var(--dust-3); max-width: 70ch; }
+    .other div { display: flex; gap: 14px; align-items: baseline; }
+    .other .fill { min-width: 24px; }
+    footer { padding: 36px var(--gut) calc(36px + env(safe-area-inset-bottom)); max-width: 1500px; margin: 0 auto; display: flex; flex-wrap: wrap; gap: 10px 28px; font-size: 13px; color: var(--dust-3); }
+    footer a { min-height: 32px; display: inline-flex; align-items: center; }
+    footer a:hover { color: var(--amber); }
+    footer .r { margin-left: auto; }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+      .js .rv { opacity: 1; transform: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="bar" id="bar">
+    <a class="brand" href="#top" aria-label="ChaX, haut de page">
+      <svg viewBox="0 0 16 16" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M2 1.5 6 5h4l4-3.5V9c0 3.5-2.7 5.5-6 5.5S2 12.5 2 9z"/><path fill="#0a0a0c" d="M5 8h2v2H5zM9 8h2v2H9z"/></svg>
+      <span>ChaX</span>
+    </a>
+    <nav aria-label="Navigation de la page">
+      <a href="#how">comment ça marche</a>
+      <a href="#facts">ce que ça change</a>
+      <a class="go" href="#telecharger">télécharger ›</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section id="hero" aria-labelledby="h1">
+      <canvas id="field" aria-hidden="true"></canvas>
+      <div class="status" aria-hidden="true">
+        <span class="bars"><i></i><i></i><i></i><i></i></span>
+        <span class="x">aucun réseau</span>
+        <span>bluetooth</span>
+        <span class="r" id="statR">bougez : vous êtes le téléphone</span>
+      </div>
+      <div class="copy">
+        <h1 id="h1"><span class="car">›<i>_</i></span> Écrivez là où il n’y a plus de <em>réseau.</em></h1>
+        <p class="lede">ChaX envoie vos messages de téléphone en téléphone, en Bluetooth. Sans compte, sans serveur, chiffré de bout en bout.</p>
+        <div class="cta">
+          <a class="btn" href="https://github.com/xxeb75/ChaX/releases/latest" data-dl>télécharger pour Android ›</a>
+          <a class="lnk" href="#how">voir comment ça marche ↓</a>
+        </div>
+      </div>
+      <div class="sim" aria-hidden="true" id="sim">simulation</div>
+    </section>
+
+    <section id="how" aria-label="Comment ça marche">
+      <div class="pin">
+        <div class="steps" id="steps">
+          <span class="head">comment ça marche</span>
+          <div class="step on">
+            <h2>Un téléphone, une portée.</h2>
+            <p>Votre téléphone parle en Bluetooth aux appareils qui l’entourent. Pas d’antenne, pas de Wi-Fi, pas de forfait.</p>
+          </div>
+          <div class="step">
+            <h2>Chaque téléphone relaie.</h2>
+            <p>Un message saute d’appareil en appareil jusqu’à son destinataire, bien au-delà de votre propre portée. Plus il y a de téléphones, plus le réseau s’étend.</p>
+          </div>
+          <div class="step">
+            <h2>Absent ? Il le recevra plus tard.</h2>
+            <p>Si le destinataire est hors de portée, un téléphone voisin garde le message et le porte jusqu’à sa rencontre.</p>
+          </div>
+          <div class="step">
+            <h2>Remis, puis lu.</h2>
+            <p>Un accusé revient par le même chemin. Vous voyez où en est chaque message : en attente, en transit, remis, lu.</p>
+          </div>
+        </div>
+        <div class="stage">
+          <canvas id="story" aria-hidden="true"></canvas>
+          <span class="cap" aria-hidden="true">simulation : appareils fictifs</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="facts">
+      <div class="wrap">
+        <span class="tag rv">ce que ça change</span>
+        <h2 class="h2 rv" style="--d:1">Rien entre vous et la personne.</h2>
+        <div class="fl">
+          <div class="row rv"><span class="k">compte</span><span class="fill"></span><span class="v">aucun : un pseudo suffit</span></div>
+          <div class="row rv"><span class="k">serveur</span><span class="fill"></span><span class="v">aucun : les téléphones font le réseau</span></div>
+          <div class="row rv"><span class="k">messages privés</span><span class="fill"></span><span class="v">chiffrés de bout en bout</span></div>
+          <div class="row rv"><span class="k">contacts</span><span class="fill"></span><span class="v">vérifiés en personne, par code</span></div>
+          <div class="row rv"><span class="k">absent</span><span class="fill"></span><span class="v">livré plus tard</span></div>
+          <div class="row rv"><span class="k">alertes</span><span class="fill"></span><span class="v">prioritaires, pour tout le monde</span></div>
+          <div class="row rv"><span class="k">photos et fichiers</span><span class="fill"></span><span class="v">jusqu’à 2 Mo</span></div>
+          <div class="row rv"><span class="k">écran éteint</span><span class="fill"></span><span class="v">le mesh continue (Android)</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="demo">
+      <div class="wrap">
+        <div class="twocol">
+          <div>
+            <span class="tag rv">dire la vérité sur chaque message</span>
+            <h2 class="h2 rv" style="--d:1">Vous savez toujours où il en est.</h2>
+            <p class="lead rv" style="--d:2">En attente d’un voisin, en transit, remis, lu : ChaX n’affiche jamais plus que ce qu’il sait. Et une alerte part chez tout le monde, même chez ceux qui arriveront plus tard.</p>
+          </div>
+          <div class="chat rv" style="--d:2" role="img" aria-label="Simulation d’une conversation : un message passe de « en attente » à « lu », puis une alerte est diffusée.">
+            <div class="hd" aria-hidden="true"><span>Léa</span><span>simulation</span></div>
+            <div id="log" aria-hidden="true"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="links">
+      <div class="wrap">
+        <div class="twocol">
+          <div>
+            <span class="tag rv">bluetooth d’abord</span>
+            <h2 class="h2 rv" style="--d:1">Internet seulement en secours, et avec votre accord.</h2>
+            <p class="lead rv" style="--d:2">Quand personne n’est à portée, ChaX peut passer par des relais Nostr publics. Il vous demande d’abord. Le Bluetooth reprend dès que des voisins reviennent.</p>
+            <p class="fine rv" style="--d:3">Les relais voient votre adresse IP, l’heure et la taille des paquets. Vos messages privés restent chiffrés ; ceux du canal public sont lisibles par n’importe qui sur ces relais.</p>
+          </div>
+          <div class="rv" style="--d:2">
+            <div class="pics" aria-hidden="true">
+              <div class="pic" id="pBt" data-s="live">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="square" stroke-linejoin="miter"><circle class="ring" cx="12" cy="12" r="11" stroke-width=".6"/><path d="M7 7.5l10 9-5 4.5V3l5 4.5-10 9"/><path class="x" d="M3.5 20.5 20.5 3.5"/></svg>
+                <b>bluetooth</b>
+              </div>
+              <div class="pic" id="pNet" data-s="off">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="square" stroke-linejoin="miter"><circle class="ring" cx="12" cy="12" r="11" stroke-width=".6"/><circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c3 3 3 13 0 16M12 4c-3 3-3 13 0 16"/><path class="x" d="M3.5 20.5 20.5 3.5"/></svg>
+                <b>internet</b>
+              </div>
+            </div>
+            <p class="lstate" id="lstate" role="status" aria-live="off">Bluetooth : 3 à portée<small>les messages passent de téléphone en téléphone</small></p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="telecharger" aria-labelledby="dlh">
+      <div class="wrap">
+        <span class="tag rv">gratuit, sans compte</span>
+        <h2 class="h2 rv" id="dlh" style="--d:1">À installer avant la zone blanche.</h2>
+        <div class="dl rv" style="--d:2">
+          <a class="btn big" id="dlBtn" href="https://github.com/xxeb75/ChaX/releases/latest" data-dl>télécharger l’APK ›</a>
+          <span class="meta" id="dlMeta">Android 7 ou plus · version de test</span>
+        </div>
+        <ol class="inst">
+          <li class="rv" style="--d:3"><b>1</b>Téléchargez le fichier APK depuis ce bouton, sur votre téléphone.</li>
+          <li class="rv" style="--d:4"><b>2</b>Ouvrez-le. Android demande d’autoriser l’installation depuis votre navigateur : acceptez, c’est normal hors Play Store.</li>
+          <li class="rv" style="--d:5"><b>3</b>Lancez ChaX, choisissez un pseudo. Pour écrire en privé, vérifiez votre contact en personne.</li>
+        </ol>
+        <div class="other rv" style="--d:3">
+          <div><span>Windows</span><span class="fill"></span><span>une version existe en test, pas encore distribuée</span></div>
+          <div><span>iPhone</span><span class="fill"></span><span>pas pour l’instant</span></div>
+          <div><span>version de test</span><span class="fill"></span><span>des changements fréquents, signée avec une clé de développement</span></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>ChaX · messagerie sans réseau</span>
+    <a href="https://github.com/xxeb75/ChaX" rel="noopener">code source ›</a>
+    <a href="https://github.com/xxeb75/ChaX/releases" rel="noopener">toutes les versions ›</a>
+    <span class="r">cette page ne collecte rien ; elle lit seulement la dernière version sur GitHub</span>
+  </footer>
+
+  <script>
+  (() => {
+    'use strict';
+    document.documentElement.classList.add('js');
+    const $ = (s, r = document) => r.querySelector(s);
+    const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+    const smooth = (t) => t * t * (3 - 2 * t);
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const AMBER = '#ffb000', IVORY = '#f1efe9', DUST1 = '#38383e', DUST2 = '#5c5c64', DUST3 = '#8c8c93', MONO = "'JetBrains Mono', ui-monospace, Consolas, monospace";
+    function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+
+    /* ---- bar ---- */
+    const bar = $('#bar');
+    const onScrollBar = () => bar.classList.toggle('solid', scrollY > 24);
+    addEventListener('scroll', onScrollBar, { passive: true });
+    onScrollBar();
+
+    /* ---- reveals ---- */
+    const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }), { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
+    $$('.rv').forEach((el) => io.observe(el));
+
+    /* ---- download: read the latest release ---- */
+    (async () => {
+      try {
+        const r = await fetch('https://api.github.com/repos/xxeb75/ChaX/releases/latest', { headers: { Accept: 'application/vnd.github+json' } });
+        if (!r.ok) return;
+        const rel = await r.json();
+        const apk = (rel.assets || []).find((a) => /\.apk$/i.test(a.name));
+        if (!apk || !/^https:\/\//.test(apk.browser_download_url)) return;
+        $$('[data-dl]').forEach((a) => (a.href = apk.browser_download_url));
+        const mb = (apk.size / 1048576).toFixed(1).replace('.', ',');
+        const v = String(rel.tag_name || '').replace(/^v/, '');
+        $('#dlMeta').textContent = `version ${v} · ${mb} Mo · Android 7 ou plus · version de test`;
+      } catch { /* the buttons keep pointing at the releases page */ }
+    })();
+
+    /* ============ hero: a field of phones, the pointer is one of them ============ */
+    const field = $('#field');
+    const hero = $('#hero');
+    const fctx = field.getContext('2d');
+    const F = { W: 0, H: 0, nodes: [], me: { x: 0, y: 0 }, tgt: null, lastMove: -1e9, R1: 150, R2: 120, packet: null, nextPacket: 900, lit: 0, hops: 0, seen: false, flash: [] };
+    let fieldVisible = true, fieldRaf = 0;
+
+    function seedField() {
+      const r = rng(7);
+      const n = Math.round(clamp(F.W * F.H / 15000, 26, 96));
+      const cols = Math.max(3, Math.round(Math.sqrt(n * F.W / F.H))), rows = Math.max(3, Math.ceil(n / cols));
+      const cw = F.W / cols, ch = F.H / rows;
+      F.nodes = [];
+      for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) F.nodes.push({ bx: (i + 0.12 + 0.76 * r()) * cw, by: (j + 0.12 + 0.76 * r()) * ch, x: 0, y: 0, ph: r() * 6.28, hop: -1, par: -1 });
+      F.R1 = clamp(Math.min(F.W, F.H) * 0.22, 110, 210);
+      F.R2 = F.R1 * 0.85;
+    }
+    function sizeField() {
+      const dpr = Math.min(devicePixelRatio || 1, 2);
+      const b = field.getBoundingClientRect();
+      F.W = b.width; F.H = b.height;
+      field.width = Math.round(F.W * dpr); field.height = Math.round(F.H * dpr);
+      fctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      seedField();
+    }
+    function relay(t) {
+      // the mesh the way ChaX builds it: the phone reaches the ones in range, each of those reaches the ones in range of it
+      const N = F.nodes, me = F.me;
+      for (const n of N) { n.hop = -1; n.par = -1; n.x = n.bx + Math.sin(t * 0.00031 + n.ph) * 7; n.y = n.by + Math.cos(t * 0.00027 + n.ph * 1.3) * 7; }
+      const q = [];
+      N.forEach((n, i) => { if (Math.hypot(n.x - me.x, n.y - me.y) < F.R1) { n.hop = 1; n.par = -1; q.push(i); } });
+      for (let h = 0; h < q.length; h++) {
+        const a = N[q[h]];
+        if (a.hop >= 4) continue;
+        N.forEach((b, j) => { if (b.hop < 0 && Math.hypot(a.x - b.x, a.y - b.y) < F.R2) { b.hop = a.hop + 1; b.par = q[h]; q.push(j); } });
+      }
+      F.lit = q.length; F.hops = q.length ? Math.max(...q.map((i) => N[i].hop)) : 0;
+    }
+    function pathTo(i) { const p = []; for (let k = i, g = 0; k >= 0 && g < 8; k = F.nodes[k].par, g++) p.push(k); return p.reverse(); }
+    function drawField(t, dt) {
+      const ctx = fctx, N = F.nodes, me = F.me;
+      ctx.clearRect(0, 0, F.W, F.H);
+      // edges
+      ctx.lineWidth = 1;
+      for (const n of N) {
+        if (n.hop < 0) continue;
+        const a = n.par >= 0 ? N[n.par] : me;
+        ctx.strokeStyle = AMBER; ctx.globalAlpha = 0.5 / n.hop + 0.08;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(n.x, n.y); ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      // range ring
+      ctx.strokeStyle = AMBER; ctx.globalAlpha = 0.45; ctx.setLineDash([2, 5]);
+      ctx.beginPath(); ctx.arc(me.x, me.y, F.R1, 0, 6.283); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+      // devices
+      for (const n of N) {
+        if (n.hop < 0) { ctx.fillStyle = DUST2; ctx.beginPath(); ctx.arc(n.x, n.y, 1.7, 0, 6.283); ctx.fill(); }
+        else { ctx.fillStyle = AMBER; ctx.globalAlpha = n.hop === 1 ? 1 : n.hop === 2 ? 0.82 : n.hop === 3 ? 0.64 : 0.5; ctx.beginPath(); ctx.arc(n.x, n.y, 3.6, 0, 6.283); ctx.fill(); ctx.globalAlpha = 1; }
+      }
+      // packet
+      if (!reduce) {
+        if (!F.packet && t > F.nextPacket && F.hops >= 2) {
+          const far = N.map((n, i) => [n.hop, i]).filter((x) => x[0] >= Math.min(F.hops, 3));
+          if (far.length) { const pick = far[Math.floor(Math.random() * far.length)][1]; F.packet = { path: pathTo(pick), t0: t, dur: 260 * (pathTo(pick).length + 1) }; }
+          F.nextPacket = t + 2600;
+        }
+        const p = F.packet;
+        if (p) {
+          const pts = [me, ...p.path.map((i) => N[i])];
+          if (p.path.some((i) => N[i].hop < 0)) F.packet = null;
+          else {
+            const u = (t - p.t0) / p.dur;
+            if (u >= 1) { const last = N[p.path[p.path.length - 1]]; F.flash.push({ x: last.x, y: last.y, t0: t }); F.packet = null; }
+            else {
+              const f = u * (pts.length - 1), k = Math.min(Math.floor(f), pts.length - 2), s = smooth(f - k);
+              const x = lerp(pts[k].x, pts[k + 1].x, s), y = lerp(pts[k].y, pts[k + 1].y, s);
+              ctx.fillStyle = IVORY; ctx.shadowColor = AMBER; ctx.shadowBlur = 14;
+              ctx.beginPath(); ctx.arc(x, y, 4, 0, 6.283); ctx.fill(); ctx.shadowBlur = 0;
+            }
+          }
+        }
+        F.flash = F.flash.filter((f) => t - f.t0 < 800);
+        for (const f of F.flash) { const u = (t - f.t0) / 800; ctx.strokeStyle = IVORY; ctx.globalAlpha = 1 - u; ctx.beginPath(); ctx.arc(f.x, f.y, 4 + u * 22, 0, 6.283); ctx.stroke(); ctx.globalAlpha = 1; }
+      }
+      // me
+      const pulse = reduce ? 0 : (t % 1800) / 1800;
+      ctx.strokeStyle = AMBER; ctx.globalAlpha = 1 - pulse; ctx.beginPath(); ctx.arc(me.x, me.y, 8 + pulse * 26, 0, 6.283); ctx.stroke(); ctx.globalAlpha = 1;
+      ctx.fillStyle = AMBER; ctx.beginPath(); ctx.arc(me.x, me.y, 7, 0, 6.283); ctx.fill();
+      ctx.fillStyle = IVORY; ctx.font = `13px ${MONO}`; ctx.textBaseline = 'middle';
+      ctx.fillText('vous', me.x + 16, me.y - 18);
+    }
+    function stepField(t) {
+      const idle = t - F.lastMove > 3200;
+      const auto = !F.seen || idle;
+      let tx, ty;
+      if (auto) { tx = F.W * (0.66 + 0.24 * Math.sin(t * 0.00028)); ty = F.H * (0.46 + 0.3 * Math.sin(t * 0.00041 + 1.2)); }
+      else { tx = F.tgt.x; ty = F.tgt.y; }
+      const k = reduce ? 1 : 0.1;
+      F.me.x = lerp(F.me.x || tx, tx, k); F.me.y = lerp(F.me.y || ty, ty, k);
+      relay(t); drawField(t);
+    }
+    function loopField(t) {
+      if (!fieldVisible || document.hidden) { fieldRaf = 0; return; }
+      stepField(t);
+      if (!(t % 4 > 3.9)) { /* counters at a calm rate */ }
+      fieldRaf = requestAnimationFrame(loopField);
+    }
+    function startField() { if (!fieldRaf && !reduce) fieldRaf = requestAnimationFrame(loopField); }
+    sizeField();
+    F.me.x = F.W * 0.7; F.me.y = F.H * 0.5;
+    if (reduce) stepField(1200); else startField();
+    new ResizeObserver(() => { sizeField(); if (reduce) stepField(1200); }).observe(hero);
+    new IntersectionObserver((es) => { fieldVisible = es[0].isIntersecting; if (fieldVisible) startField(); }).observe(hero);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) startField(); });
+    field.addEventListener('pointermove', (e) => { const b = field.getBoundingClientRect(); F.tgt = { x: e.clientX - b.left, y: e.clientY - b.top }; F.seen = true; F.lastMove = performance.now(); if (reduce) stepField(performance.now()); });
+    const stat = $('#statR'), sim = $('#sim');
+    setInterval(() => {
+      if (!fieldVisible) return;
+      const s = F.lit ? `${F.lit} appareil${F.lit > 1 ? 's' : ''} joint${F.lit > 1 ? 's' : ''} · ${F.hops} saut${F.hops > 1 ? 's' : ''}` : 'personne à portée';
+      stat.textContent = F.seen ? s : 'bougez : vous êtes le téléphone';
+      sim.textContent = `simulation · ${s}`;
+    }, 300);
+
+    /* ============ how: a pinned map, the scroll builds the mesh ============ */
+    const story = $('#story'), sctx = story.getContext('2d'), how = $('#how');
+    const steps = $$('#steps .step');
+    // normalised layout; links exist between nodes closer than RANGE (in canvas widths)
+    const NODES = [
+      { id: 'A', x: 0.12, y: 0.55 }, { id: 'B', x: 0.28, y: 0.36 }, { id: 'C', x: 0.27, y: 0.74 },
+      { id: 'D', x: 0.45, y: 0.27 }, { id: 'E', x: 0.45, y: 0.56 }, { id: 'F', x: 0.44, y: 0.85 },
+      { id: 'G', x: 0.62, y: 0.4 }, { id: 'H', x: 0.6, y: 0.72 }, { id: 'I', x: 0.79, y: 0.27 },
+      { id: 'J', x: 0.78, y: 0.58 }, { id: 'Z', x: 0.93, y: 0.84 },
+    ];
+    const S = { W: 0, H: 0, p: 0, dirty: true };
+    function sizeStory() {
+      const dpr = Math.min(devicePixelRatio || 1, 2);
+      const b = story.getBoundingClientRect();
+      S.W = b.width; S.H = b.height;
+      story.width = Math.round(S.W * dpr); story.height = Math.round(S.H * dpr);
+      sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      S.dirty = true;
+    }
+    const P = (n) => ({ x: n.x * S.W * 0.9 + S.W * 0.05, y: n.y * S.H * 0.86 + S.H * 0.07 });
+    function drawStory(p, time) {
+      const ctx = sctx, W = S.W, H = S.H;
+      ctx.clearRect(0, 0, W, H);
+      const RANGE = (S.W < 520 ? 0.3 : 0.23) * W / 0.9;
+      const s = Math.min(3, Math.floor(p * 4)), t = clamp(p * 4 - s, 0, 1);
+      const byId = Object.fromEntries(NODES.map((n) => [n.id, { ...P(n), id: n.id }]));
+      const near = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) < RANGE * 1.02;
+      // the carrier H walks toward Z in step 3
+      let carrier = byId.H;
+      const walk = s === 2 ? smooth(clamp(t / 0.7, 0, 1)) : s > 2 ? 1 : 0;
+      const hFrom = { ...P({ x: 0.6, y: 0.72 }) }, hTo = { ...P({ x: 0.83, y: 0.84 }) };
+      carrier.x = lerp(hFrom.x, hTo.x, walk); carrier.y = lerp(hFrom.y, hTo.y, walk);
+      const ids = Object.keys(byId), list = ids.map((i) => byId[i]);
+      // hop levels from A, never through Z
+      const hop = { A: 0 }; const q = ['A'];
+      for (let h = 0; h < q.length; h++) for (const id of ids) { if (id === 'Z' || hop[id] !== undefined) continue; if (near(byId[q[h]], byId[id]) && !(q[h] === 'H' && walk > 0.3)) { hop[id] = hop[q[h]] + 1; q.push(id); } }
+      const pathI = ['A', 'B', 'D', 'G', 'I'];
+      const litTo = s === 0 ? 1 : s === 1 ? 1 + t * 4.4 : 9;
+      const nodeLit = (id) => hop[id] !== undefined && (s === 0 ? hop[id] === 1 && Math.hypot(byId[id].x - byId.A.x, byId[id].y - byId.A.y) < RANGE * smooth(clamp(t * 1.4, 0, 1)) : hop[id] <= litTo);
+      // faint possible links
+      ctx.lineWidth = 1; ctx.strokeStyle = DUST1;
+      for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) if (near(list[i], list[j])) { ctx.globalAlpha = 0.7; ctx.beginPath(); ctx.moveTo(list[i].x, list[i].y); ctx.lineTo(list[j].x, list[j].y); ctx.stroke(); }
+      ctx.globalAlpha = 1;
+      // lit links
+      ctx.strokeStyle = AMBER;
+      for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+        const a = list[i], b = list[j];
+        if (!near(a, b)) continue;
+        const la = nodeLit(a.id) || a.id === 'A', lb = nodeLit(b.id) || b.id === 'A';
+        if (la && lb && Math.abs((hop[a.id] ?? 9) - (hop[b.id] ?? 9)) <= 1) { ctx.globalAlpha = s === 0 ? 0.9 : s === 1 ? 0.5 : 0.28; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
+      }
+      ctx.globalAlpha = 1;
+      // step 0: the range ring
+      if (s === 0) {
+        const r = RANGE * smooth(clamp(t * 1.4, 0, 1));
+        ctx.strokeStyle = AMBER; ctx.globalAlpha = 0.6; ctx.setLineDash([2, 5]); ctx.beginPath(); ctx.arc(byId.A.x, byId.A.y, r, 0, 6.283); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+        if (t > 0.35) { ctx.fillStyle = DUST3; ctx.font = `12px ${MONO}`; ctx.fillText('portée bluetooth', byId.A.x + 8, byId.A.y - r - 10 < 14 ? byId.A.y + r + 18 : byId.A.y - r - 10); }
+      }
+      // nodes
+      for (const n of list) {
+        const lit = n.id === 'A' || nodeLit(n.id) || (s >= 2 && n.id === 'Z' && walk > 0.92) || (s === 3 && n.id === 'Z');
+        const rr = n.id === 'A' ? 8 : n.id === 'Z' ? 6 : 5;
+        ctx.fillStyle = lit ? AMBER : DUST2; ctx.globalAlpha = lit ? 1 : 0.9;
+        ctx.beginPath(); ctx.arc(n.x, n.y, rr, 0, 6.283); ctx.fill(); ctx.globalAlpha = 1;
+        if (n.id === 'A' || n.id === 'Z') { ctx.fillStyle = IVORY; ctx.font = `13px ${MONO}`; ctx.fillText(n.id === 'A' ? 'vous' : 'Léa', n.x + 14, n.y - 14); }
+      }
+      // helpers
+      const along = (ids2, u) => { const pts = ids2.map((i) => byId[i]); const f = u * (pts.length - 1), k = Math.min(Math.floor(f), pts.length - 2), e = smooth(f - k); return { x: lerp(pts[k].x, pts[k + 1].x, e), y: lerp(pts[k].y, pts[k + 1].y, e), hop: k + (e > 0.5 ? 1 : 0) }; };
+      const packet = (x, y, c) => { ctx.fillStyle = c; ctx.shadowColor = AMBER; ctx.shadowBlur = 16; ctx.beginPath(); ctx.arc(x, y, 5, 0, 6.283); ctx.fill(); ctx.shadowBlur = 0; };
+      const label = (txt, x, y, c = IVORY) => { ctx.fillStyle = c; ctx.font = `13px ${MONO}`; ctx.fillText(txt, x, y); };
+      if (s === 1) {
+        const u = clamp((t - 0.12) / 0.8, 0, 1);
+        const q2 = along(pathI, u); packet(q2.x, q2.y, IVORY);
+        label(`${q2.hop} saut${q2.hop > 1 ? 's' : ''}`, q2.x + 12, q2.y + 22, AMBER);
+      }
+      if (s === 2) {
+        // the packet waits in H until it meets Z
+        ctx.strokeStyle = IVORY; ctx.lineWidth = 1.5; ctx.strokeRect(carrier.x - 9, carrier.y - 9, 18, 18); ctx.lineWidth = 1;
+        label(walk < 0.95 ? 'il porte le message' : 'Léa est de retour', carrier.x - 52, carrier.y + 30, walk < 0.95 ? IVORY : AMBER);
+        if (walk > 0.92) { const z = byId.Z; const k2 = clamp((t - 0.7) / 0.3, 0, 1); ctx.strokeStyle = IVORY; ctx.globalAlpha = 1 - k2; ctx.beginPath(); ctx.arc(z.x, z.y, 6 + k2 * 26, 0, 6.283); ctx.stroke(); ctx.globalAlpha = 1; ctx.strokeStyle = AMBER; ctx.beginPath(); ctx.moveTo(carrier.x, carrier.y); ctx.lineTo(z.x, z.y); ctx.stroke(); }
+      }
+      if (s === 3) {
+        const back = ['Z', 'H', 'G', 'D', 'B', 'A'];
+        // route links stay lit
+        ctx.strokeStyle = AMBER; ctx.globalAlpha = 0.5; ctx.beginPath(); back.forEach((id, i) => (i ? ctx.lineTo(byId[id].x, byId[id].y) : ctx.moveTo(byId[id].x, byId[id].y))); ctx.stroke(); ctx.globalAlpha = 1;
+        const u = clamp(t / 0.6, 0, 1);
+        if (u < 1) { const q3 = along(back, u); packet(q3.x, q3.y, IVORY); }
+        const a = byId.A;
+        const state = t < 0.6 ? ['›', 'en transit', DUST3] : t < 0.82 ? ['››', 'remis', IVORY] : ['››', 'lu', AMBER];
+        label(`${state[0]} ${state[1]}`, a.x - 4, a.y + 34, state[2]);
+      }
+      if (!reduce && s < 3 && s !== 2) { /* ambient: the faint breathing of the unlit devices */ const k = (Math.sin(time * 0.002) + 1) / 2; ctx.globalAlpha = 0.08 + k * 0.1; ctx.fillStyle = DUST3; for (const n of list) { if (!nodeLit(n.id)) { ctx.beginPath(); ctx.arc(n.x, n.y, 9, 0, 6.283); ctx.fill(); } } ctx.globalAlpha = 1; }
+      steps.forEach((el, i) => { el.classList.toggle('on', i === s); el.classList.toggle('done', i < s); });
+    }
+    function updateStoryProgress() {
+      const b = how.getBoundingClientRect();
+      const total = how.offsetHeight - innerHeight;
+      const p = clamp(-b.top / Math.max(1, total), 0, 0.9999);
+      if (Math.abs(p - S.p) > 0.0002) { S.p = p; S.dirty = true; }
+    }
+    let storyVisible = false, storyRaf = 0;
+    function loopStory(t) {
+      if (!storyVisible || document.hidden) { storyRaf = 0; return; }
+      updateStoryProgress();
+      if (S.dirty || !reduce) { drawStory(S.p, t); S.dirty = false; }
+      storyRaf = requestAnimationFrame(loopStory);
+    }
+    sizeStory();
+    new ResizeObserver(sizeStory).observe(story);
+    new IntersectionObserver((es) => { storyVisible = es[0].isIntersecting; if (storyVisible && !storyRaf) storyRaf = requestAnimationFrame(loopStory); }, { rootMargin: '100px' }).observe(how);
+    updateStoryProgress(); drawStory(S.p, 0);
+
+    /* ============ demo chat ============ */
+    const log = $('#log');
+    const GLY = { wait: ['…', 'en attente d’un voisin'], transit: ['›', 'en transit'], delivered: ['››', 'remis'], read: ['››', 'lu'] };
+    function msg(kind, who, text) {
+      const m = document.createElement('div'); m.className = `m ${kind}`;
+      const w = document.createElement('span'); w.className = 'who'; w.textContent = who;
+      const t = document.createElement('span'); t.className = 't'; t.textContent = text;
+      m.append(w, t); if (kind === 'mine' || kind === 'alert') { const st = document.createElement('div'); st.className = 'st'; m.append(st); }
+      log.append(m); while (log.children.length > 5) log.firstChild.remove(); return m;
+    }
+    function setSt(m, k) { const st = m.querySelector('.st'); const [g, w] = GLY[k]; st.className = `st ${k === 'wait' ? 'wait' : k === 'read' ? 'read' : ''}`; st.replaceChildren(); const a = document.createElement('span'); a.className = 'g'; a.textContent = g; const b = document.createElement('span'); b.textContent = w; st.append(a, b); }
+    let demoRun = 0;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    async function demo() {
+      const id = ++demoRun;
+      while (id === demoRun) {
+        log.replaceChildren();
+        await sleep(500); if (id !== demoRun) return;
+        msg('theirs', 'Léa', 'tu es où ? je n’ai plus de réseau');
+        await sleep(1700); if (id !== demoRun) return;
+        const mine = msg('mine', 'vous', 'au refuge, côté nord. j’arrive');
+        setSt(mine, 'wait'); await sleep(1400); if (id !== demoRun) return;
+        setSt(mine, 'transit'); await sleep(1500); if (id !== demoRun) return;
+        setSt(mine, 'delivered'); await sleep(1500); if (id !== demoRun) return;
+        setSt(mine, 'read'); await sleep(1900); if (id !== demoRun) return;
+        const al = msg('alert', 'alerte · Léa', 'chute de pierres, le sentier est fermé');
+        const st = al.querySelector('.st'); st.textContent = 'part chez tout le monde, même ceux qui arriveront plus tard';
+        await sleep(5200);
+      }
+    }
+    const chat = $('.chat');
+    if (reduce) {
+      msg('theirs', 'Léa', 'tu es où ? je n’ai plus de réseau'); const mm = msg('mine', 'vous', 'au refuge, côté nord. j’arrive'); setSt(mm, 'read');
+      const al = msg('alert', 'alerte · Léa', 'chute de pierres, le sentier est fermé'); al.querySelector('.st').textContent = 'part chez tout le monde, même ceux qui arriveront plus tard';
+    } else {
+      new IntersectionObserver((es) => { if (es[0].isIntersecting) { if (!demoRun || demoRun < 0) demo(); } else { demoRun = -1; } }, { threshold: 0.35 }).observe(chat);
+    }
+
+    /* ============ links: the two pictos ============ */
+    const pBt = $('#pBt'), pNet = $('#pNet'), ls = $('#lstate');
+    const LSTATES = [
+      ['live', 'off', 'Bluetooth : 3 à portée', 'les messages passent de téléphone en téléphone'],
+      ['idle', 'off', 'Bluetooth : personne à portée', 'au bout d’une trentaine de secondes, ChaX envisage les relais'],
+      ['idle', 'idle', 'ChaX vous demande : passer par internet ?', 'vous seul décidez ; l’accord est demandé une fois'],
+      ['idle', 'live', 'Internet : actif, avec votre accord', 'dès que des voisins reviennent, le Bluetooth reprend'],
+    ];
+    let li = 0;
+    function showL(i) {
+      const [b, n, t, s] = LSTATES[i]; pBt.dataset.s = b; pNet.dataset.s = n;
+      ls.replaceChildren(document.createTextNode(t)); const sm = document.createElement('small'); sm.textContent = s; ls.append(sm);
+    }
+    if (!reduce) { let timer; new IntersectionObserver((es) => { clearInterval(timer); if (es[0].isIntersecting) timer = setInterval(() => { li = (li + 1) % LSTATES.length; showL(li); }, 2800); }, { threshold: 0.3 }).observe($('#links')); }
+  })();
+  </script>
+</body>
+</html>

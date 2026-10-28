@@ -829,6 +829,71 @@ function updateDialog(u: Update): void {
   go.focus();
 }
 
+let asking = false;
+let lastAsk = 0;
+/** The first time the relays would be needed: say what they see and let the user decide. Asked once, answer kept. */
+function consentDialog(): void {
+  asking = true;
+  const back = document.activeElement as HTMLElement | null;
+  const o = el('div', 'lightbox verify netd');
+  o.setAttribute('role', 'dialog');
+  o.setAttribute('aria-modal', 'true');
+  o.setAttribute('aria-label', 'Passer par internet ?');
+  const bar = el('div', 'bar');
+  const x = el('button', undefined, 'plus tard ×');
+  x.type = 'button';
+  bar.append(span('', 'internet'), x);
+  const body = el('div', 'vbody');
+  const title = el('p', 'vstat', 'Personne à portée en Bluetooth');
+  const intro = el(
+    'p',
+    'vintro',
+    'ChaX peut acheminer vos messages par des relais Nostr publics, tant que personne n’est à portée ; le Bluetooth reprend dès que des voisins reviennent. Les relais voient votre adresse IP, l’heure et la taille des paquets. Vos messages privés restent chiffrés de bout en bout ; ceux du canal public sont lisibles par n’importe qui sur ces relais. Vous pourrez changer ce choix dans les paramètres (engrenage).',
+  );
+  const act = el('div', 'vact');
+  const yes = el('button', 'primary', 'autoriser ›');
+  yes.type = 'button';
+  const no = el('button', undefined, 'non, Bluetooth seul');
+  no.type = 'button';
+  act.append(yes, no);
+  body.append(title, intro, act);
+  o.append(bar, body);
+
+  const shut = () => {
+    if (closeLightbox !== shut) return;
+    closeLightbox = undefined;
+    asking = false;
+    o.remove();
+    document.removeEventListener('keydown', onKey, true);
+    back?.focus?.();
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      window.history.state?.lb ? window.history.back() : shut();
+    }
+  };
+  closeLightbox = shut;
+  try {
+    window.history.pushState({ ...(window.history.state ?? {}), lb: true }, '');
+  } catch {
+    /* ignore */
+  }
+  document.addEventListener('keydown', onKey, true);
+  const close = () => (window.history.state?.lb ? window.history.back() : shut());
+  const answer = (consent: 'yes' | 'no') => {
+    const cfg = loadNet();
+    save('chax.net', { ...cfg, consent });
+    close();
+    renderList();
+  };
+  yes.onclick = () => answer('yes');
+  no.onclick = () => answer('no');
+  x.onclick = close; // later: asked again at the next need
+  document.body.append(o);
+  yes.focus();
+}
+
 /** The banner at the top of the list when a newer build exists. It opens the download in the browser. */
 function offerUpdate(u: Update): void {
   const b = $<HTMLButtonElement>('upd');
@@ -877,6 +942,8 @@ function netDialog(): void {
     r.append(car, span('', name), el('small', undefined, hint));
     r.onclick = () => {
       cfg.mode = mode;
+      if (mode === 'on') cfg.consent = 'yes';
+      else if (mode === 'auto' && cfg.consent === 'no') cfg.consent = undefined; // asked again when the relays are needed
       save('chax.net', cfg);
       if (mode === 'on' && !net!.running) net!.start();
       else if (mode === 'off' && net!.running) net!.stop();
@@ -1340,6 +1407,12 @@ function start(nickname: string): void {
     mode: () => loadNet().mode,
     range: () => rangeIds().size,
     viaNetOnly: () => neighborIds().size - rangeIds().size,
+    allowed: () => loadNet().consent === 'yes',
+    ask: () => {
+      if (loadNet().consent || closeLightbox || asking || Date.now() - lastAsk < 10 * 60 * 1000) return; // "plus tard" waits ten minutes
+      lastAsk = Date.now();
+      consentDialog();
+    },
   });
   // peers reached through relays only stay visible if we keep announcing ourselves
   setInterval(() => net?.running && node.announce(), 5 * 60 * 1000);

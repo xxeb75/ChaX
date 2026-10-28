@@ -83,10 +83,13 @@ export type NetMode = 'auto' | 'on' | 'off';
 export interface NetCfg {
   mode: NetMode;
   relays: string[];
+  /** The user's answer to "may the app use public relays by itself?". Unset until asked; "on" mode counts as a yes. */
+  consent?: 'yes' | 'no';
 }
 export const loadNet = (): NetCfg => {
-  const c = load<{ mode?: NetMode; on?: boolean; relays?: string[] }>('chax.net');
+  const c = load<{ mode?: NetMode; on?: boolean; relays?: string[]; consent?: 'yes' | 'no' }>('chax.net');
   // builds before the automatic mode stored an on/off flag
   const mode: NetMode = c?.mode === 'on' || c?.mode === 'off' || c?.mode === 'auto' ? c.mode : c?.on ? 'on' : 'auto';
-  return { mode, relays: Array.isArray(c?.relays) && c.relays.length ? c.relays : [] };
+  const consent = c?.consent === 'yes' || c?.consent === 'no' ? c.consent : mode === 'on' ? 'yes' : undefined;
+  return { mode, relays: Array.isArray(c?.relays) && c.relays.length ? c.relays : [], consent };
 };

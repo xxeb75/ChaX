@@ -40,6 +40,20 @@
         "start"
       ],
       "port": 8787
+    },
+    {
+      "name": "site",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "5180",
+        "--directory",
+        "site",
+        "--bind",
+        "127.0.0.1"
+      ],
+      "port": 5180
     }
   ]
 }

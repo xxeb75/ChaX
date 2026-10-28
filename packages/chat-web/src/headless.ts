@@ -119,6 +119,8 @@ function run(nickname: string): void {
     mode: () => loadNet().mode,
     range: () => new Set(radio()).size,
     viaNetOnly: () => new Set([...node.neighbors.values()]).size - new Set(radio()).size,
+    allowed: () => loadNet().consent === 'yes',
+    ask: () => undefined, // only the visible page can ask
   });
   setInterval(() => net.running && node.announce(), 5 * 60 * 1000); // keeps us visible to peers reached through the relays
   nat.log(`headless node up as ${nickname} ${node.peerId.slice(0, 8)}`);

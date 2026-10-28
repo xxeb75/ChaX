@@ -17,6 +17,10 @@ export interface FallbackSource {
   range(): number;
   /** Neighbours reachable only through the relays right now. */
   viaNetOnly(): number;
+  /** The user agreed to automatic use of the relays. Without it, "auto" never switches them on by itself. */
+  allowed(): boolean;
+  /** Called while the relays are needed but not allowed: the page asks the user (once), the service does nothing. */
+  ask(): void;
 }
 
 /** Returns a function that stops the controller. */
@@ -47,8 +51,10 @@ export function runFallback(net: NostrTransport, src: FallbackSource): () => voi
       rangeSince = 0;
       if (!noRangeSince) noRangeSince = now;
       if (!net.running && now - noRangeSince >= GRACE_MS) {
-        net.start();
-        owned = true;
+        if (src.allowed()) {
+          net.start();
+          owned = true;
+        } else src.ask();
       }
     } else {
       noRangeSince = 0;
